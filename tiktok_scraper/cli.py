@@ -154,6 +154,63 @@ def cmd_search(args, settings: Settings) -> int:
     return 0
 
 
+def _read_links(path: str) -> list[str]:
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+
+
+def cmd_shop(args, settings: Settings) -> int:
+    """Pull creator videos off TikTok Shop product pages."""
+    from .providers.shop import ShopProductProvider
+
+    urls = _read_links(args.links) if args.links else []
+    if args.url:
+        urls.extend(u.strip() for u in args.url.split(",") if u.strip())
+    if not urls:
+        print("No product links. Pass --links <file> or --url <url>", file=sys.stderr)
+        return 2
+
+    print(f"{len(urls)} product page(s)")
+    provider = ShopProductProvider(
+        delay_seconds=settings.request_delay_seconds, headless=not args.headed
+    )
+
+    videos: list[Video] = []
+    try:
+        for i, url in enumerate(urls, 1):
+            print(f"[{i}/{len(urls)}] {url[:70]}")
+            try:
+                found = provider.fetch_product_videos(
+                    url, limit=args.limit,
+                    dump_dir=(args.dump_raw and Path(args.dump_raw)) or None,
+                )
+                videos.extend(found)
+                creators = len({v.handle for v in found})
+                print(f"    {len(found)} videos from {creators} creators")
+            except BlockedError as exc:
+                print(f"    BLOCKED: {exc}", file=sys.stderr)
+                break
+            except ProviderError as exc:
+                print(f"    skipped: {exc}", file=sys.stderr)
+    finally:
+        provider.close()
+
+    if videos:
+        handles = sorted({v.handle for v in videos})
+        print(f"\n{len(videos)} videos, {len(handles)} unique creators")
+
+    _emit(videos, VIDEO_COLUMNS, "videos", settings, args)
+
+    # The handles are the point of this command -- they feed the next step.
+    if videos and args.handles_out:
+        out = Path(args.handles_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("handle\n" + "\n".join(sorted({v.handle for v in videos})) + "\n")
+        print(f"  [handles] wrote {len(set(v.handle for v in videos))} handles -> {out}")
+
+    return 0 if videos else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tiktok_scraper",
@@ -187,6 +244,17 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--query", required=True, help="Comma-separated keywords/hashtags")
     common(search)
     search.set_defaults(func=cmd_search)
+
+    shop = sub.add_parser(
+        "shop", help="Pull creator videos from TikTok Shop product pages"
+    )
+    shop.add_argument("--links", help="Text file of product URLs, one per line")
+    shop.add_argument("--url", help="Comma-separated product URLs")
+    shop.add_argument("--handles-out", default="data/output/handles.csv",
+                      help="Also write the unique creator handles here")
+    shop.add_argument("--dump-raw", help="Directory to save raw intercepted JSON (for debugging)")
+    common(shop)
+    shop.set_defaults(func=cmd_shop)
 
     return parser
 

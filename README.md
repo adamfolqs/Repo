@@ -118,3 +118,31 @@ handling, and schema/sink agreement. No network required.
   have a basis to hold.
 - If `playwright` starts returning `BlockedError`, that is the IP, not the code —
   switch provider or route through a residential IP.
+
+## Sourcing creators from TikTok Shop product pages
+
+The reliable way to build a creator list. A Shop product page lists the actual
+creators posting about that exact product, with canonical `@handles` — far
+better than matching display names, which are not unique and are often
+misread when taken from a screen recording.
+
+```bash
+# 1. Get creators + their videos from the product pages
+python -m tiktok_scraper shop --links data/input/product_links.txt
+
+# 2. Then pull each creator's full profile + back catalogue
+python -m tiktok_scraper creators --input data/output/handles.csv --sink both
+```
+
+Step 1 writes `data/output/handles.csv`, which is directly the input to step 2.
+
+Notes:
+- `shop.tiktok.com` is less defended than the main site — it serves product
+  pages without a captcha wall.
+- The creator section renders client-side, so this needs a real browser
+  (`playwright install chromium`). Plain HTTP returns the page shell only.
+- `--dump-raw <dir>` saves the raw intercepted JSON. Worth using on the first
+  run: TikTok reshapes these payloads periodically, and the raw capture makes a
+  low result count diagnosable without re-scraping.
+- Short share links (`tiktok.com/t/...`) are resolved automatically. Note they
+  embed the sharing account's id — avoid pasting them anywhere public.

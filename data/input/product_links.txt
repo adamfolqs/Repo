@@ -1,0 +1,11 @@
+# TikTok Shop product pages to pull creator videos from.
+# One URL per line. Lines starting with # are ignored.
+# Short share links (tiktok.com/t/...) are resolved automatically.
+
+https://www.tiktok.com/t/ZP9BAmhRSus9f-mig5H/
+https://www.tiktok.com/t/ZP9BAmu8DLmHu-Bdofp/
+https://www.tiktok.com/t/ZP9BAm43TKg4f-MWxSa/
+https://www.tiktok.com/t/ZP9BAmQGEtCjH-iLZDZ/
+https://www.tiktok.com/t/ZP9BAudVSqu4h-QVjiZ/
+https://www.tiktok.com/t/ZP9BAmwHBRh18-aVoRd/
+https://www.tiktok.com/t/ZP9BAuFHfuu4M-a5DJy/
