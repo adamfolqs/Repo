@@ -59,7 +59,45 @@ def test_brand_disambiguation():
     assert match_brand("no brands here at all") == ""
     print("  brand disambiguation OK (@mention and word-boundary scoring)")
 
+def test_brand_accounts():
+    """The brand's own account is not an outreach target."""
+    from tiktok_scraper.enrich import is_brand_account
+    for handle in ["trymiraclemoo", "try.miraclemoo", "wondercowusa", "drinkarmra",
+                   "cowboycolostrum", "nutricost"]:
+        assert is_brand_account(handle), handle
+    # Creators who merely review a brand must NOT be flagged -- mislabelling
+    # one drops a real outreach target from the list entirely.
+    for handle in ["sarahtriedwondercow", "jenlaurenn", "whatmojoloves",
+                   "leahdajud", "creakzshop", "nicollefigueroaa"]:
+        assert not is_brand_account(handle), handle
+    print("  brand-owned account flagging OK")
+
+
+def test_skeptical():
+    """Debunking videos are kept and marked, not dropped."""
+    from tiktok_scraper.enrich import is_skeptical
+    assert is_skeptical("Deinfluencing colostrum.. is colostrum worth it?")
+    assert is_skeptical("honest review: this was a waste of money")
+    assert is_skeptical("el calostro no funciona para nada")
+    assert not is_skeptical("day 30 of colostrum and my gut feels amazing")
+    print("  skeptical/debunking detection OK")
+
+
+def test_product_tag_not_erased():
+    """A provider's commerce-anchor signal survives text enrichment."""
+    from tiktok_scraper.models import Video
+    from tiktok_scraper.enrich import enrich_videos
+    # Caption names no brand and no shop words, but TikTok said it sells.
+    video = Video(video_id="7" + "0" * 18, handle="someone",
+                  description="my morning routine", has_product_tag=True)
+    enrich_videos([video])
+    assert video.has_product_tag is True, "structural product tag was erased"
+    print("  structural product-tag signal preserved OK")
+
+
 if __name__ == "__main__":
-    for fn in [test_language, test_email, test_brand_and_product, test_colostrum_filter, test_brand_disambiguation]:
+    for fn in [test_language, test_email, test_brand_and_product, test_colostrum_filter,
+               test_brand_disambiguation, test_brand_accounts, test_skeptical,
+               test_product_tag_not_erased]:
         print(fn.__name__ + ":"); fn()
     print("\nALL ENRICH TESTS PASSED")

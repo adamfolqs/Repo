@@ -31,6 +31,9 @@ class Creator(BaseModel):
 
     email: Optional[str] = Field(default=None, description="Contact email from public bio")
     language: Optional[str] = Field(default=None, description="English / Spanish / unknown")
+    brand_account: Optional[bool] = Field(
+        default=None, description="The brand's own account, not an outreach target"
+    )
 
     scraped_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     source: Optional[str] = Field(default=None, description="Which provider produced this row")
@@ -69,6 +72,13 @@ class Video(BaseModel):
     competitor_brand: Optional[str] = Field(default=None, description="Competitor featured in the video")
     is_colostrum: Optional[bool] = Field(default=None, description="Video is about colostrum")
     has_product_tag: Optional[bool] = Field(default=None, description="Video tags/sells a product")
+    stance: Optional[str] = Field(
+        default=None,
+        description="'skeptical' when the caption reads as critical, else empty",
+    )
+    brand_account: Optional[bool] = Field(
+        default=None, description="Posted by the brand's own account, not a creator"
+    )
     creator_email: Optional[str] = Field(default=None, description="Contact email, joined from the creator")
     creator_followers: Optional[int] = Field(default=None, description="Joined from the creator, for tiering")
 
@@ -106,6 +116,7 @@ VIDEO_COLUMNS = [
     "video_url", "handle", "creator_email", "creator_followers",
     # Sorting / filtering columns
     "language", "competitor_brand", "is_colostrum", "has_product_tag",
+    "stance", "brand_account",
     # Performance
     "likes", "views", "comments", "shares", "saves", "engagement_rate",
     # Content - what to replicate
@@ -117,7 +128,8 @@ VIDEO_COLUMNS = [
 ]
 
 CREATOR_COLUMNS = [
-    "handle", "profile_url", "email", "language", "nickname", "followers", "following",
+    "handle", "profile_url", "email", "language", "brand_account",
+    "nickname", "followers", "following",
     "total_likes", "video_count", "verified", "bio", "bio_link",
     "region", "user_id", "avatar_url", "scraped_at", "source",
 ]

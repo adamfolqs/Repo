@@ -166,6 +166,66 @@ def is_colostrum(*texts: str | None) -> bool:
     return any(term in blob for term in _COLOSTRUM_TERMS)
 
 
+# Accounts that ARE the brand, rather than creators talking about it. Not
+# outreach targets, but worth keeping as reference for what each competitor
+# pushes itself.
+_KNOWN_BRAND_ACCOUNTS = {
+    "trymiraclemoo", "try.miraclemoo", "miraclemoo", "wondercowusa", "wondercow",
+    "armra", "drinkarmra", "bloomnutrition", "cymbiotika", "lemme", "nutricost",
+    "microingredients", "physicianschoice", "wellah", "cowboycolostrum",
+    "cowabungacolostrum", "rheaessentials", "magicmilk",
+}
+
+
+def is_brand_account(handle: str | None, nickname: str | None = None) -> bool:
+    """Whether an account looks like the brand's own, not a creator's.
+
+    Checked against a known list first, then against the competitor aliases --
+    a handle that *is* a brand name ('@wondercowusa') is the brand; one that
+    merely mentions colostrum is not. Deliberately narrow: mislabelling a real
+    creator as brand-owned drops them from outreach entirely.
+    """
+    if not handle:
+        return False
+    normalized = handle.lstrip("@").lower().replace("_", "").replace(".", "")
+    if normalized in {h.replace("_", "").replace(".", "") for h in _KNOWN_BRAND_ACCOUNTS}:
+        return True
+    for aliases in COMPETITOR_BRANDS.values():
+        for alias in aliases:
+            compact = alias.replace(" ", "").replace("'", "")
+            if len(compact) < 5:
+                continue
+            # The brand name must be essentially the whole handle: 'wondercowusa'
+            # is the brand, 'sarahtriedwondercow' is a creator reviewing it.
+            if normalized == compact or (
+                normalized.startswith(compact)
+                and len(normalized) - len(compact) <= 4
+            ) or (
+                normalized.endswith(compact)
+                and len(normalized) - len(compact) <= 3
+            ):
+                return True
+    return False
+
+
+# Negative / debunking videos are kept deliberately: they are the objection
+# research that tells you what a sceptical buyer already believes.
+_SKEPTICAL_TERMS = [
+    "deinfluencing", "de-influencing", "not worth", "isn't worth", "isnt worth",
+    "waste of money", "waste your money", "don't buy", "dont buy", "stop buying",
+    "overrated", "hard pass", "scam", "debunk", "no evidence", "placebo",
+    "not backed by", "myth", "snake oil", "save your money", "disappointed",
+    "didn't work", "didnt work", "did not work", "stopped taking", "regret",
+    "no diferencia", "no funciona", "no vale la pena", "estafa", "no sirve",
+]
+
+
+def is_skeptical(*texts: str | None) -> bool:
+    """Whether the caption reads as critical of the product/category."""
+    blob = " ".join(t.lower() for t in texts if t)
+    return any(term in blob for term in _SKEPTICAL_TERMS)
+
+
 def has_product_tag(description: str | None, hashtags=None, extra=None) -> bool:
     """Whether the video looks like it tags/sells a product.
 
@@ -201,7 +261,14 @@ def enrich_videos(videos, creators=None):
         video.language_confidence = conf
         video.competitor_brand = match_brand(text, tags, video.music_title) or None
         video.is_colostrum = is_colostrum(text, tags, video.music_title)
-        video.has_product_tag = has_product_tag(text, video.hashtags)
+        # A provider may already have set this from TikTok's own commerce
+        # anchors, which is stronger evidence than the caption. OR rather than
+        # assign, so the text heuristic can add a True but never erase one.
+        video.has_product_tag = bool(video.has_product_tag) or has_product_tag(
+            text, video.hashtags
+        )
+        video.stance = "skeptical" if is_skeptical(text, tags) else None
+        video.brand_account = is_brand_account(video.handle) or None
 
         creator = by_handle.get((video.handle or "").lower())
         if creator:
@@ -220,6 +287,7 @@ def enrich_creators(creators):
         creator.email = extract_email(creator.bio, creator.bio_link) or None
         lang, _ = detect_language(creator.bio)
         creator.language = lang
+        creator.brand_account = is_brand_account(creator.handle, creator.nickname) or None
     return creators
 
 
