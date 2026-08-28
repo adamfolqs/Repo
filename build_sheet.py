@@ -243,6 +243,55 @@ ORIGINAL_HEADER = [
 ]
 
 
+def _write_slim_csvs(csv_dir, video_columns, qualifying, creator_columns,
+                     creator_rows, original_rows) -> None:
+    """Narrower copies for destinations that take content inline.
+
+    Same rows, fewer columns: the bulky free-text fields (full caption, bio,
+    avatar and cover URLs) are what make the full export large, and none of
+    them is what someone sorting an outreach list is reading. Captions are
+    kept but truncated, since the point of a caption here is to recognise the
+    creative, not to reproduce it.
+    """
+    slim_dir = csv_dir / "slim"
+    slim_dir.mkdir(exist_ok=True)
+
+    keep_video = ["video_url", "handle", "creator_followers", "creator_email",
+                  "likes", "views", "comments", "engagement_rate", "language",
+                  "competitor_brand", "stance", "brand_account", "description",
+                  "created_at"]
+    idx = {name: i for i, name in enumerate(video_columns)}
+    with (slim_dir / "Videos.csv").open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(keep_video)
+        for video in qualifying:
+            row = video_row(video, video_columns)
+            out = [row[idx[c]] for c in keep_video]
+            caption = out[keep_video.index("description")]
+            if isinstance(caption, str) and len(caption) > 180:
+                out[keep_video.index("description")] = caption[:177] + "..."
+            writer.writerow(out)
+
+    keep_creator = ["handle", "profile_url", "followers", "email", "language",
+                    "brand_account", "colostrum_videos", "qualifying_videos",
+                    "total_likes_on_colostrum_videos", "brands_featured",
+                    "skeptical_videos", "top_video_url", "top_video_likes",
+                    "nickname", "verified", "region"]
+    cidx = {name: i for i, name in enumerate(creator_columns)}
+    with (slim_dir / "Creators.csv").open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(keep_creator)
+        for row in creator_rows:
+            writer.writerow([row[cidx[c]] for c in keep_creator])
+
+    with (slim_dir / "Original_Sheet_and_Handles.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as fh:
+        writer = csv.writer(fh)
+        writer.writerow(ORIGINAL_HEADER)
+        writer.writerows(original_rows)
+
+
 # ---------------------------------------------------------------------- main
 
 def main() -> int:
@@ -369,6 +418,9 @@ def main() -> int:
             writer = csv.writer(fh)
             writer.writerow(columns)
             writer.writerows(rows)
+
+    _write_slim_csvs(csv_dir, video_columns, qualifying, creator_columns,
+                     creator_rows, original_rows)
 
     # ---- report ----------------------------------------------------------
     langs: dict[str, int] = defaultdict(int)
