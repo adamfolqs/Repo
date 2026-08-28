@@ -101,8 +101,12 @@ def _archive(screenshots: list[Path], settings: TrackerSettings, week: Week) -> 
     moved = 0
     for path in screenshots:
         target = destination / path.name
-        if target.exists():
-            target = destination / f"{path.stem}_{moved}{path.suffix}"
+        suffix = 1
+        # Re-check each candidate: reusing a single counter lets a third run for
+        # the same week land back on an existing name and overwrite it.
+        while target.exists():
+            target = destination / f"{path.stem}_{suffix}{path.suffix}"
+            suffix += 1
         shutil.move(str(path), str(target))
         moved += 1
     return moved
@@ -156,11 +160,25 @@ def cmd_run(args, settings: TrackerSettings) -> int:
     # ---- 0. take the screenshots ourselves, if asked
     if args.capture:
         print("  capturing screens from Seller Center")
-        result = capture_all(
-            week, settings.screenshot_dir, settings.session_file,
-            plan=load_plan(settings.capture_plan),
-            headless=settings.capture_headless and not args.headed,
-        )
+        try:
+            result = capture_all(
+                week, settings.screenshot_dir, settings.session_file,
+                plan=load_plan(settings.capture_plan),
+                headless=settings.capture_headless and not args.headed,
+            )
+        except SessionExpired as exc:
+            # This is the one failure that strictly needs a person, so it must
+            # not die quietly in a log file at 09:00 on a Friday. Report it
+            # through the same channels as a normal week and then stop.
+            print(f"  {exc}", file=sys.stderr)
+            report = Report(
+                week=week, metrics=WeeklyMetrics(),
+                notes=[f"TikTok login needed before this week can be collected: {exc}"],
+                sheet_url=SHEET_URL.format(sheet_id=settings.wiki_sheet_id),
+                screenshots=0,
+            )
+            _deliver(report, settings, quiet=args.no_notify)
+            return 2
         for name, why in result.failed:
             capture_notes.append(f"could not capture {name}: {why}")
         print(f"  captured {len(result.saved)} screen(s), {len(result.failed)} failed")
@@ -187,7 +205,8 @@ def cmd_run(args, settings: TrackerSettings) -> int:
               "reporting only what --set provides", file=sys.stderr)
 
     # ---- 2. manual values (retainer payments never appear in a TikTok screenshot)
-    for key, value in _parse_overrides(args.set).items():
+    overrides = _parse_overrides(args.set)
+    for key, value in overrides.items():
         setattr(metrics, key, value)
 
     # ---- 3. samples sent
@@ -208,7 +227,8 @@ def cmd_run(args, settings: TrackerSettings) -> int:
         except Exception as exc:
             print(f"  sample tracker unavailable: {exc}", file=sys.stderr)
     if metrics.samples_sent is not None and not samples_source:
-        samples_source = "read from the Orders tab (free-sample tag)"
+        samples_source = ("--set samples_sent" if "samples_sent" in overrides
+                          else "read from the Orders tab (free-sample tag)")
 
     # The authoritative count is the free-sample-tagged order total in Seller
     # Center. The PO tracker is a second, partial view of the same thing, so a
@@ -278,9 +298,12 @@ def cmd_run(args, settings: TrackerSettings) -> int:
 
     _deliver(report, settings, quiet=args.no_notify)
 
-    if screenshots and not args.dry_run and not args.keep_screenshots:
+    if screenshots and not args.dry_run and not args.keep_screenshots and not write_error:
         moved = _archive(screenshots, settings, week)
         print(f"  archived {moved} screenshot(s) to {settings.archive_dir}")
+    elif screenshots and write_error:
+        print("  screenshots kept in the inbox so this week can be re-run",
+              file=sys.stderr)
 
     return 1 if write_error else 0
 

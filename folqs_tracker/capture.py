@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,10 +76,19 @@ class CaptureTarget:
     calibrated: bool = False    # False = the URL/actions are a best guess
 
     def resolve_url(self, week: Week) -> str:
+        """Fill {start}/{end} in the URL for this week.
+
+        Substitution is by literal replace, not str.format: real Seller Center
+        URLs contain JSON-ish query values with braces, and str.format raises
+        KeyError on them -- an error that is neither PlaywrightError nor
+        CaptureError, so it would escape the per-target handler and kill the
+        whole run rather than one screen.
+        """
         if not self.url:
             return ""
-        return self.url.format(start=week.start.strftime(self.date_format),
-                               end=week.end.strftime(self.date_format))
+        return (self.url
+                .replace("{start}", week.start.strftime(self.date_format))
+                .replace("{end}", week.end.strftime(self.date_format)))
 
     @classmethod
     def from_dict(cls, raw: dict) -> "CaptureTarget":
@@ -109,10 +119,27 @@ DEFAULT_PLAN: list[CaptureTarget] = [
     CaptureTarget("creator", "Analytics -> Creator",
                   url=f"{SELLER_CENTER}/compass/creator-analysis",
                   expect_text="Creator"),
+    # Samples are a filter dialog rather than a page. TikTok's own guide names
+    # the tag "Free Sample from Seller"; there is a second sample tag whose exact
+    # label varies by region, so `calibrate` should confirm both against the
+    # account before this is trusted.
+    #
+    # expect_text is the safety net that matters here: it asserts the applied
+    # filter chip is on screen. Without it, a filter that silently failed to
+    # apply yields a screenshot of EVERY order -- visually identical to the real
+    # thing, and read as a sample count an order of magnitude too high.
     CaptureTarget("samples", "Orders -> free-sample order tag",
                   url=f"{SELLER_CENTER}/order",
-                  actions=[{"note": "Calibrate: Awaiting Shipment -> All -> Filters "
-                                    "-> Order Tag -> both free-sample options -> Apply"}]),
+                  actions=[
+                      {"click": "text=Filter"},
+                      {"wait_ms": 800},
+                      {"click": "text=Order Tag"},
+                      {"wait_ms": 500},
+                      {"click": "text=Free Sample from Seller"},
+                      {"click": "text=Apply"},
+                      {"wait_ms": 2000},
+                  ],
+                  expect_text="Free Sample from Seller"),
     CaptureTarget("ads", "Ads Manager -> GMV Max",
                   url="https://ads.tiktok.com/i18n/perf/campaign",
                   expect_text="Cost"),
@@ -214,12 +241,21 @@ def save_session(session_file: Path, *, timeout_minutes: int = 10) -> Path:
                 "Log in fully, then run this again."
             )
 
-        context.storage_state(path=str(session_file))
+        _write_session(context, session_file)
         browser.close()
 
-    # Session cookies are credentials in every meaningful sense.
-    os.chmod(session_file, stat.S_IRUSR | stat.S_IWUSR)
     return session_file
+
+
+def _write_session(context, session_file: Path) -> None:
+    """Persist the browser session, owner-readable only.
+
+    These cookies are a live login. Anything that writes them goes through
+    here so the 0600 is never forgotten on one path.
+    """
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    context.storage_state(path=str(session_file))
+    os.chmod(session_file, stat.S_IRUSR | stat.S_IWUSR)
 
 
 @dataclass
@@ -252,10 +288,16 @@ def capture_all(
             f"No saved session at {session_file}. Run:  python -m folqs_tracker login"
         )
 
-    targets = plan if plan is not None else load_plan()
+    full_plan = plan if plan is not None else load_plan()
+    # Numbering is fixed to the target's position in the FULL plan. Numbering by
+    # position in a filtered list means `--only ads` writes 01_ads.png beside a
+    # stale 05_ads.png, and the extractor then sees the same screen twice with
+    # different numbers.
+    positions = {t.key: i for i, t in enumerate(full_plan, 1)}
+    targets = full_plan
     if only:
         wanted = set(only)
-        targets = [t for t in targets if t.key in wanted]
+        targets = [t for t in full_plan if t.key in wanted]
         if not targets:
             raise CaptureError(f"no capture targets matched {sorted(wanted)}")
 
@@ -270,8 +312,9 @@ def capture_all(
         page.set_default_timeout(45_000)
 
         try:
-            for index, target in enumerate(targets, 1):
-                print(f"  [{index}/{len(targets)}] {target.name}")
+            for step, target in enumerate(targets, 1):
+                index = positions[target.key]
+                print(f"  [{step}/{len(targets)}] {target.name}")
                 try:
                     url = target.resolve_url(week)
                     if url:
@@ -353,6 +396,30 @@ def _run_actions(page, target: CaptureTarget) -> None:
                 raise CaptureError(f"unknown action {action!r} in target {target.key!r}")
 
 
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+EPOCH = re.compile(r"(?<![\d.])\d{10}(?:\d{3})?(?![\d.])")
+
+
+def templatize_dates(url: str) -> tuple[str, str, bool]:
+    """Turn the dates in a recorded URL back into {start}/{end} placeholders.
+
+    Calibration records a URL that has one specific week baked into it. Stored
+    verbatim, every future run would screenshot *that* week while telling the
+    extractor it was looking at a different one -- numbers from the wrong seven
+    days, with nothing on screen to reveal it. So the dates are parameterised
+    on the way in.
+
+    Returns (url, date_format, found_any).
+    """
+    for pattern, fmt in ((ISO_DATE, "%Y-%m-%d"), (EPOCH, "%s")):
+        found = pattern.findall(url)
+        if len(found) >= 2:
+            # First occurrence is the range start, second the end.
+            url = url.replace(found[0], "{start}", 1).replace(found[1], "{end}", 1)
+            return url, fmt, True
+    return url, "%Y-%m-%d", False
+
+
 def calibrate(session_file: Path, plan_path: Path = PLAN_FILE) -> Path:
     """Walk through the screens with a human and record the real URLs.
 
@@ -380,11 +447,21 @@ def calibrate(session_file: Path, plan_path: Path = PLAN_FILE) -> Path:
             if looks_logged_out(page.url, page):
                 print("      that is a login page -- log in first, then retry this screen")
                 continue
-            target.url = page.url
+            url, fmt, parameterised = templatize_dates(page.url)
+            target.url = url
+            target.date_format = fmt
             target.calibrated = True
-            print(f"      recorded {page.url[:100]}")
+            print(f"      recorded {url[:100]}")
+            if not parameterised:
+                print("      NOTE: no date range found in that URL, so this screen's "
+                      "dates are set in the UI. Add the clicks to its `actions`, or "
+                      "it will always show whatever range is remembered.")
 
-        context.storage_state(path=str(session_file))
+        # Only refresh a session that already exists. Writing one here would
+        # create a logged-out "session" that satisfies every existence check
+        # downstream and then fails at capture time for no visible reason.
+        if session_file.exists() and not looks_logged_out(page.url, page):
+            _write_session(context, session_file)
         browser.close()
 
     saved = save_plan(targets, plan_path)

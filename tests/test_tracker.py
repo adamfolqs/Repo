@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from folqs_tracker.capture import (DEFAULT_PLAN, CaptureTarget, load_plan,
-                                   looks_logged_out, save_plan)
+                                   looks_logged_out, save_plan, templatize_dates)
 from folqs_tracker.derive import derive, deltas
 from folqs_tracker.models import ALL_ROWS, WeeklyMetrics, coerce, format_value
 from folqs_tracker.report import Report
@@ -340,6 +340,83 @@ def test_every_url_target_asserts_its_own_content():
     print("content assertions OK")
 
 
+# ------------------------------------------------- regressions (code review)
+
+def test_recorded_urls_keep_their_date_range_parameterised():
+    """Calibration bakes one week into the URL; it must come back out.
+
+    Left verbatim, every run would photograph the calibration week while
+    telling the extractor it was a different one -- right-looking numbers for
+    the wrong seven days, invisible on the screenshot.
+    """
+    url, fmt, found = templatize_dates(
+        "https://seller-us.tiktok.com/compass?start_date=2026-07-03&end_date=2026-07-09")
+    assert found and fmt == "%Y-%m-%d"
+    assert CaptureTarget("k", "K", url=url, date_format=fmt).resolve_url(
+        week_containing(date(2026, 8, 26))
+    ) == "https://seller-us.tiktok.com/compass?start_date=2026-08-21&end_date=2026-08-27"
+
+    epoch_url, fmt, found = templatize_dates("https://x.com?s=1751500800&e=1752105600")
+    assert found and "{start}" in epoch_url and "{end}" in epoch_url
+
+    _, _, found = templatize_dates("https://x.com/compass")
+    assert not found, "a URL with no dates must be reported, not silently accepted"
+    print("date parameterisation OK")
+
+
+def test_literal_braces_in_a_url_do_not_kill_the_run():
+    """Real Seller Center URLs carry JSON-ish query values."""
+    target = CaptureTarget("k", "K", url='https://x.com?filter={"tag":1}&s={start}')
+    assert target.resolve_url(week_containing(date(2026, 8, 26))) == \
+        'https://x.com?filter={"tag":1}&s=2026-08-21'
+    print("brace-safe urls OK")
+
+
+def test_a_hyphen_week_label_is_not_a_new_column():
+    """The tab is hand-edited; a typed hyphen must still match the en dash."""
+    grid = [list(r) for r in GRID]
+    grid[5][1] = "03/07-09/07"      # hyphen, not en dash
+    ws = FakeWorksheet(grid)
+    sheet = WeeklyTrackerSheet(ws, ws.get_all_values())
+    assert sheet.find_column(W1) == 1, "must update the existing column, not append"
+    print("dash folding OK")
+
+
+def test_a_fractional_count_cell_does_not_abandon_the_write():
+    grid = [list(r) for r in GRID]
+    grid[7][1] = "20.5"             # Orders is declared int
+    ws = FakeWorksheet(grid)
+    read = WeeklyTrackerSheet(ws, ws.get_all_values()).read_week(W1)
+    assert read.orders == 20 and isinstance(read.orders, int)
+    print("count coercion OK")
+
+
+def test_capture_filenames_come_from_the_full_plan():
+    """`--only` must not renumber a screen into a collision with a stale file."""
+    positions = {t.key: i for i, t in enumerate(DEFAULT_PLAN, 1)}
+    assert positions["samples"] == 4 and positions["ads"] == 5
+    assert len(set(positions.values())) == len(DEFAULT_PLAN)
+    print("capture numbering OK")
+
+
+def test_archiving_the_same_week_three_times_loses_nothing():
+    import tempfile
+    from folqs_tracker.cli import _archive
+    from folqs_tracker.config import TrackerSettings
+
+    week = week_containing(date(2026, 8, 26))
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        settings = TrackerSettings(archive_dir=root / "archive")
+        for _ in range(3):
+            shot = root / "01_shop.png"
+            shot.write_bytes(b"png")
+            _archive([shot], settings, week)
+        archived = list((settings.archive_dir).rglob("*.png"))
+        assert len(archived) == 3, f"expected 3 kept files, found {len(archived)}"
+    print("archive collisions OK")
+
+
 TESTS = [
     test_weeks_match_the_trackers_own_history,
     test_derivations_reproduce_the_sheet,
@@ -359,6 +436,12 @@ TESTS = [
     test_capture_urls_carry_the_reporting_week,
     test_capture_plan_validates_and_round_trips,
     test_every_url_target_asserts_its_own_content,
+    test_recorded_urls_keep_their_date_range_parameterised,
+    test_literal_braces_in_a_url_do_not_kill_the_run,
+    test_a_hyphen_week_label_is_not_a_new_column,
+    test_a_fractional_count_cell_does_not_abandon_the_write,
+    test_capture_filenames_come_from_the_full_plan,
+    test_archiving_the_same_week_three_times_loses_nothing,
 ]
 
 if __name__ == "__main__":

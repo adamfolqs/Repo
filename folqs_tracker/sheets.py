@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from .models import SECTIONS, WeeklyMetrics, format_value
+from .models import SECTIONS, WeeklyMetrics, coerce, format_value
 from .weeks import EN_DASH
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -28,7 +28,17 @@ FIRST_DATA_COL = 1  # 0-based; column B
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text or "")).strip().lower()
+    """Normalize a label for comparison.
+
+    Dashes are folded together because week labels are the lookup key and the
+    tab is hand-edited: a column typed with a hyphen instead of an en dash
+    would otherwise read as a different week, producing a duplicate column and
+    silently losing every week-over-week delta.
+    """
+    text = str(text or "")
+    for dash in ("\u2013", "\u2014", "\u2212"):
+        text = text.replace(dash, "-")
+    return re.sub(r"\s+", " ", text).strip().lower()
 
 
 def parse_cell(text: str) -> Optional[float]:
@@ -160,7 +170,10 @@ class WeeklyTrackerSheet:
                     continue
                 value = parse_cell(self._cell(at, col))
                 if value is not None:
-                    data[row.field] = value
+                    # Counts are declared int. A cell holding "20.5" would fail
+                    # validation and, through cmd_run's blanket handler, abandon
+                    # an otherwise valid write over a stale neighbouring cell.
+                    data[row.field] = coerce(row.field, value)
         return WeeklyMetrics(**data) if data else WeeklyMetrics()
 
     # ---------------------------------------------------------------- writing
