@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import Settings
+from .enrich import enrich_creators, enrich_videos, filter_videos
 from .inputs import normalize_handle, read_handles
 from .models import CREATOR_COLUMNS, VIDEO_COLUMNS, Creator, Video
 from .providers.base import BlockedError, ProviderError, get_provider
@@ -21,6 +22,23 @@ from .sinks.files import write_csv, write_xlsx
 
 def _stamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _prepare(videos, creators, args):
+    """Enrich then filter, so every sink sees the same finished rows."""
+    enrich_creators(creators)
+    enrich_videos(videos, creators)
+    before = len(videos)
+    videos = filter_videos(
+        videos,
+        min_likes=getattr(args, "min_likes", 0),
+        colostrum_only=getattr(args, "colostrum_only", False),
+        product_only=getattr(args, "product_only", False),
+        language=getattr(args, "language", None),
+    )
+    if before != len(videos):
+        print(f"  filtered {before} -> {len(videos)} videos")
+    return videos, creators
 
 
 def _emit(records, columns, label: str, settings: Settings, args) -> None:
@@ -116,6 +134,7 @@ def cmd_creators(args, settings: Settings) -> int:
     finally:
         provider.close()
 
+    videos, creators = _prepare(videos, creators, args)
     _emit(creators, CREATOR_COLUMNS, "creators", settings, args)
     _emit(videos, VIDEO_COLUMNS, "videos", settings, args)
 
@@ -150,6 +169,7 @@ def cmd_search(args, settings: Settings) -> int:
     finally:
         provider.close()
 
+    videos, _ = _prepare(videos, [], args)
     _emit(videos, VIDEO_COLUMNS, "videos", settings, args)
     return 0
 
@@ -195,6 +215,7 @@ def cmd_shop(args, settings: Settings) -> int:
     finally:
         provider.close()
 
+    videos, _ = _prepare(videos, [], args)
     if videos:
         handles = sorted({v.handle for v in videos})
         print(f"\n{len(videos)} videos, {len(handles)} unique creators")
@@ -230,6 +251,14 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Override TIKTOK_PROVIDER for this run")
         p.add_argument("--headed", action="store_true",
                        help="Show the browser window (playwright only; useful for debugging)")
+        p.add_argument("--min-likes", type=int, default=0,
+                       help="Drop videos below this like count (e.g. 50)")
+        p.add_argument("--colostrum-only", action="store_true",
+                       help="Keep only videos about colostrum (EN + ES terms)")
+        p.add_argument("--product-only", action="store_true",
+                       help="Keep only videos that tag/sell a product")
+        p.add_argument("--language", choices=["English", "Spanish"],
+                       help="Keep only videos in this language")
 
     creators = sub.add_parser("creators", help="Scrape specific creators by handle")
     creators.add_argument("--input", help="CSV/XLSX to read handles from")
