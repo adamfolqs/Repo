@@ -22,7 +22,7 @@ from typing import Any, Iterable
 
 from ..models import Video
 from .base import BlockedError, ProviderError
-from .playwright_provider import UA, PlaywrightProvider, _int, _ts
+from .playwright_provider import _CAPTCHA_MARKERS, UA, PlaywrightProvider, _int, _ts
 
 # Short share links (tiktok.com/t/XXXX) and full PDP urls both appear in the
 # wild; normalize to a product id.
@@ -92,7 +92,10 @@ class ShopProductProvider(PlaywrightProvider):
             time.sleep(self._delay)
 
             html = page.content()
-            if "captcha-verify" in html or "/captcha/" in html:
+            # Reuse the shared narrow marker set: matching a bare "/captcha/"
+            # here reported a wall on every product page, because the captcha
+            # SDK's asset URL is bundled into all of them.
+            if any(marker in html for marker in _CAPTCHA_MARKERS):
                 raise BlockedError(
                     "TikTok Shop served a captcha. Wait a few minutes, or run "
                     "with --headed and solve it once."
