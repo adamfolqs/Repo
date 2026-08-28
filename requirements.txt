@@ -16,3 +16,4 @@ playwright>=1.45
 
 # Weekly performance tracker (python -m folqs_tracker)
 anthropic>=0.40         # reads analytics screenshots into typed metrics
+# playwright (already required above) also drives the screenshot capture

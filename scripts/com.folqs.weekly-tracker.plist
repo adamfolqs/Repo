@@ -17,6 +17,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>__REPO_DIR__/scripts/run_weekly_tracker.sh</string>
+        <string>--capture</string>
     </array>
 
     <key>StartCalendarInterval</key>

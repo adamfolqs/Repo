@@ -38,6 +38,11 @@ class TrackerSettings:
     archive_dir: Path = field(default_factory=lambda: Path("data/tracking/archive"))
     snapshot_dir: Path = field(default_factory=lambda: Path("data/tracking/snapshots"))
 
+    # --- Browser capture ---
+    session_file: Path = field(default_factory=lambda: Path(".tiktok_session.json"))
+    capture_plan: Path = field(default_factory=lambda: Path("capture_plan.json"))
+    capture_headless: bool = True
+
     # --- Email digest ---
     smtp_host: str = ""
     smtp_port: int = 587
@@ -65,6 +70,9 @@ class TrackerSettings:
             screenshot_dir=Path(env("TRACKER_SCREENSHOT_DIR", "data/tracking/inbox")),
             archive_dir=Path(env("TRACKER_ARCHIVE_DIR", "data/tracking/archive")),
             snapshot_dir=Path(env("TRACKER_SNAPSHOT_DIR", "data/tracking/snapshots")),
+            session_file=Path(env("TIKTOK_SESSION_FILE", ".tiktok_session.json")),
+            capture_plan=Path(env("TRACKER_CAPTURE_PLAN", "capture_plan.json")),
+            capture_headless=env("TRACKER_CAPTURE_HEADLESS", "1") not in ("0", "false", "False"),
             smtp_host=env("SMTP_HOST", ""),
             smtp_port=int(env("SMTP_PORT", "587")),
             smtp_user=env("SMTP_USER", ""),

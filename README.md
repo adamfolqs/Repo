@@ -216,6 +216,48 @@ Useful flags: `--week 21/08-27/08` or `--week-ending 2026-08-27` to redo an
 earlier week, `--samples-sent 26` to override the counted figure, `--overwrite`
 to replace existing cells, `--no-notify` to stay quiet.
 
+## Taking the screenshots automatically
+
+The bot can collect the screens itself instead of waiting for you to paste them
+in. Set it up once:
+
+```bash
+python -m folqs_tracker login       # opens a browser; log in by hand (incl. 2FA)
+python -m folqs_tracker calibrate   # walk the 6 screens, it records their URLs
+python -m folqs_tracker capture --headed   # test a capture run, watch it work
+```
+
+Then the weekly job takes its own screenshots:
+
+```bash
+python -m folqs_tracker run --capture
+```
+
+**No password is ever stored.** `login` opens a real browser, you log in
+yourself (2FA included), and only the resulting browser session is saved — to
+`.tiktok_session.json`, owner-readable, gitignored. When it expires the run
+stops with exit code 2 and tells you to run `login` again.
+
+`calibrate` exists because Seller Center URLs carry account-specific ids and
+change between releases, so shipping guessed URLs would be worse than asking
+once. It writes `capture_plan.json`, which then takes precedence over the
+built-in defaults. The samples screen needs a click sequence rather than a URL
+(Filters → Order Tag → free-sample options → Apply), so its `actions` list has
+to be filled in by hand — the file has a comment saying so, and until it is,
+that target fails with an explanation instead of capturing the wrong screen.
+
+Two guards make automated capture safe to leave unattended:
+
+- **A login page is never captured.** A logged-out Seller Center screenshots
+  perfectly, and feeding that to the extractor would produce a week of blanks
+  with no visible cause. Every capture is checked, before and after its click
+  script, and an expired session aborts the run rather than continuing.
+- **Every screen must prove it is the right screen.** Each target asserts a
+  string it must contain (`GMV`, `Impressions`, `Cost`, …). Proxy errors,
+  TikTok's own "something went wrong", and empty states all render and
+  screenshot just fine — the assertion is what stops one being saved as data.
+  A screen that fails is reported in the digest; the other five still run.
+
 ## Scheduling
 
 ```bash

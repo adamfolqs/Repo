@@ -12,6 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from folqs_tracker.capture import (DEFAULT_PLAN, CaptureTarget, load_plan,
+                                   looks_logged_out, save_plan)
 from folqs_tracker.derive import derive, deltas
 from folqs_tracker.models import ALL_ROWS, WeeklyMetrics, coerce, format_value
 from folqs_tracker.report import Report
@@ -288,6 +290,56 @@ def test_cell_parsing_and_coercion_round_trip():
     print("parsing OK")
 
 
+# ----------------------------------------------------------------- capture
+
+def test_login_pages_are_recognised():
+    """A logged-out Seller Center still screenshots perfectly -- so detect it."""
+    for url in ("https://seller-us.tiktok.com/account/login",
+                "https://seller-us.tiktok.com/passport/web/login",
+                "https://accounts.tiktok.com/x"):
+        assert looks_logged_out(url), url
+    assert not looks_logged_out("https://seller-us.tiktok.com/compass/shop-analysis")
+    print("login detection OK")
+
+
+def test_capture_urls_carry_the_reporting_week():
+    target = CaptureTarget("x", "X", url="https://e.com?from={start}&to={end}")
+    assert target.resolve_url(week_containing(date(2026, 8, 26))) == \
+        "https://e.com?from=2026-08-21&to=2026-08-27"
+    assert CaptureTarget("y", "Y", actions=[{"click": "a"}]).resolve_url(
+        week_containing(date(2026, 8, 26))) == ""
+    print("capture urls OK")
+
+
+def test_capture_plan_validates_and_round_trips(tmp=None):
+    import tempfile
+    bad = [({"key": "a", "name": "A"}, "neither a url nor actions"),
+           ({"name": "no key", "url": "x"}, "needs a 'key'"),
+           ({"key": "a", "name": "A", "url": "x", "nope": 1}, "unknown key")]
+    for raw, expected in bad:
+        try:
+            CaptureTarget.from_dict(raw)
+            assert False, f"should have rejected {raw}"
+        except ValueError as exc:
+            assert expected in str(exc), f"{exc} != {expected}"
+
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "plan.json"
+        save_plan(list(DEFAULT_PLAN), path)
+        assert [t.key for t in load_plan(path)] == [t.key for t in DEFAULT_PLAN]
+    assert [t.key for t in load_plan(Path("does-not-exist.json"))] == \
+        [t.key for t in DEFAULT_PLAN], "missing plan falls back to defaults"
+    print("capture plan OK")
+
+
+def test_every_url_target_asserts_its_own_content():
+    """Without an expect_text, an error page would be saved as if it were data."""
+    for target in DEFAULT_PLAN:
+        if target.url and not target.actions:
+            assert target.expect_text, f"{target.key} has no content assertion"
+    print("content assertions OK")
+
+
 TESTS = [
     test_weeks_match_the_trackers_own_history,
     test_derivations_reproduce_the_sheet,
@@ -303,6 +355,10 @@ TESTS = [
     test_cross_source_note_reaches_the_digest,
     test_an_empty_inbox_is_flagged_loudly,
     test_cell_parsing_and_coercion_round_trip,
+    test_login_pages_are_recognised,
+    test_capture_urls_carry_the_reporting_week,
+    test_capture_plan_validates_and_round_trips,
+    test_every_url_target_asserts_its_own_content,
 ]
 
 if __name__ == "__main__":

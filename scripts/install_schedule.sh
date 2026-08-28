@@ -45,7 +45,7 @@ install_launchd() {
 
 install_cron() {
     mkdir -p "$REPO_DIR/data/tracking/logs"
-    local line="$MINUTE $HOUR * * 5 $RUNNER $CRON_TAG"
+    local line="$MINUTE $HOUR * * 5 $RUNNER --capture $CRON_TAG"
     local current
     current="$(crontab -l 2>/dev/null | grep -v -F "$CRON_TAG" || true)"
     printf '%s\n%s\n' "$current" "$line" | sed '/^$/d' | crontab -

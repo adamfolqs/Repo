@@ -17,6 +17,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
+from .capture import (CaptureError, SessionExpired, calibrate, capture_all,
+                      load_plan, save_session)
 from .config import TrackerSettings
 from .derive import derive, deltas
 from .models import ALL_ROWS, WeeklyMetrics, coerce
@@ -149,6 +151,20 @@ def cmd_run(args, settings: TrackerSettings) -> int:
     week = _resolve_week(args)
     print(f"Week {week.label}  ({week.start:%d %b} to {week.end:%d %b %Y})")
 
+    capture_notes: list[str] = []
+
+    # ---- 0. take the screenshots ourselves, if asked
+    if args.capture:
+        print("  capturing screens from Seller Center")
+        result = capture_all(
+            week, settings.screenshot_dir, settings.session_file,
+            plan=load_plan(settings.capture_plan),
+            headless=settings.capture_headless and not args.headed,
+        )
+        for name, why in result.failed:
+            capture_notes.append(f"could not capture {name}: {why}")
+        print(f"  captured {len(result.saved)} screen(s), {len(result.failed)} failed")
+
     # ---- 1. read the screenshots
     from .extract import find_screenshots
 
@@ -197,7 +213,7 @@ def cmd_run(args, settings: TrackerSettings) -> int:
     # The authoritative count is the free-sample-tagged order total in Seller
     # Center. The PO tracker is a second, partial view of the same thing, so a
     # disagreement is worth surfacing rather than silently preferring either.
-    notes: list[str] = []
+    notes: list[str] = list(capture_notes)
     if (samples is not None and metrics.samples_sent is not None
             and samples_source != "counted from the sample tracker"
             and metrics.samples_sent != samples.units):
@@ -287,6 +303,20 @@ def cmd_check(args, settings: TrackerSettings) -> int:
     line(settings.telegram_configured, "telegram configured")
     line(settings.screenshot_dir.exists(), f"screenshot inbox {settings.screenshot_dir}")
 
+    print("\nAutomated capture")
+    line(settings.session_file.exists(),
+         f"saved TikTok session at {settings.session_file}"
+         + ("" if settings.session_file.exists() else "  -- run: folqs_tracker login"))
+    try:
+        plan = load_plan(settings.capture_plan)
+        uncalibrated = [t.key for t in plan if not t.calibrated]
+        line(not uncalibrated,
+             f"{len(plan)} capture target(s) calibrated"
+             if not uncalibrated
+             else f"uncalibrated: {', '.join(uncalibrated)}  -- run: folqs_tracker calibrate")
+    except Exception as exc:
+        line(False, f"capture plan unreadable: {exc}")
+
     week = last_complete_week()
     print(f"\nWeek to report: {week.label}")
     from .extract import find_screenshots
@@ -334,6 +364,37 @@ def cmd_notify_test(args, settings: TrackerSettings) -> int:
 
 # --------------------------------------------------------------------- parser
 
+def cmd_login(args, settings: TrackerSettings) -> int:
+    """Log in once, by hand, and save the session for later runs."""
+    path = save_session(settings.session_file)
+    print(f"\nSession saved to {path} (owner-readable only).")
+    print("It is a credential -- it is gitignored, and must not be shared.")
+    print("When it expires, run this again.")
+    return 0
+
+
+def cmd_calibrate(args, settings: TrackerSettings) -> int:
+    """Record the real Seller Center URLs from your own account."""
+    calibrate(settings.session_file, settings.capture_plan)
+    return 0
+
+
+def cmd_capture(args, settings: TrackerSettings) -> int:
+    """Take the screenshots without doing anything else."""
+    week = _resolve_week(args)
+    print(f"Week {week.label}")
+    result = capture_all(
+        week, settings.screenshot_dir, settings.session_file,
+        plan=load_plan(settings.capture_plan),
+        headless=settings.capture_headless and not args.headed,
+        only=args.only.split(",") if args.only else None,
+    )
+    print(f"\n{len(result.saved)} screen(s) saved to {settings.screenshot_dir}")
+    for name, why in result.failed:
+        print(f"  FAILED {name}: {why}", file=sys.stderr)
+    return 1 if result.failed and not result.saved else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="folqs_tracker",
@@ -359,7 +420,25 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--keep-screenshots", action="store_true",
                      help="Leave the inbox alone instead of archiving what was read")
     run.add_argument("--print-report", action="store_true", help="Print the digest to stdout")
+    run.add_argument("--capture", action="store_true",
+                     help="Take the screenshots first, instead of using the inbox")
+    run.add_argument("--headed", action="store_true",
+                     help="Show the browser window while capturing")
     run.set_defaults(func=cmd_run)
+
+    login = sub.add_parser("login", help="Log in to Seller Center once and save the session")
+    login.set_defaults(func=cmd_login)
+
+    cal = sub.add_parser("calibrate", help="Record the real Seller Center URLs for your account")
+    cal.set_defaults(func=cmd_calibrate)
+
+    cap = sub.add_parser("capture", help="Take this week's screenshots and stop")
+    cap.add_argument("--week", help="Week label, e.g. '21/08-27/08'")
+    cap.add_argument("--week-ending", help="Any date YYYY-MM-DD inside the week")
+    cap.add_argument("--year", type=int)
+    cap.add_argument("--only", help="Comma-separated target keys, e.g. samples,ads")
+    cap.add_argument("--headed", action="store_true", help="Show the browser window")
+    cap.set_defaults(func=cmd_capture)
 
     check = sub.add_parser("check", help="Validate config, credentials and tab layout")
     check.set_defaults(func=cmd_check)
@@ -378,6 +457,12 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130
+    except SessionExpired as exc:
+        print(f"\nTikTok login needed: {exc}", file=sys.stderr)
+        return 2
+    except CaptureError as exc:
+        print(f"capture error: {exc}", file=sys.stderr)
+        return 1
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         if __import__("os").getenv("TRACKER_DEBUG"):

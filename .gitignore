@@ -28,3 +28,9 @@ data/tracking/inbox/*
 !data/tracking/inbox/README.md
 data/tracking/archive/
 data/tracking/logs/
+
+# Browser session for Seller Center capture. These cookies ARE a login --
+# treat the file like a password. The capture plan carries account-specific
+# URLs, so it stays local too.
+.tiktok_session.json
+capture_plan.json
