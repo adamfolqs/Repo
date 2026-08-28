@@ -257,10 +257,8 @@ def cmd_discover(args, settings: Settings) -> int:
     out = Path(args.urls_out)
     known: dict[str, str] = {}
     if out.exists():
-        for line in _read_lines(str(out))[1:] if out.read_text().startswith("video_url") else _read_lines(str(out)):
-            parts = line.split(",")
-            if len(parts) >= 2:
-                known[parts[1].strip()] = parts[0].strip()
+        for handle, video_id in _read_url_rows(out):
+            known[video_id] = handle
     print(f"{len(keywords)} keyword(s); {len(known)} URL(s) already on file")
 
     provider = DiscoverProvider(
@@ -321,6 +319,20 @@ def cmd_discover(args, settings: Settings) -> int:
     return 0
 
 
+def _read_url_rows(path) -> list[tuple[str, str]]:
+    """(handle, video_id) rows from the discovered-URL file.
+
+    Skips the header and any row whose id is not a TikTok video id, so a
+    malformed line can never be re-fetched as if it were a video.
+    """
+    rows = []
+    for line in _read_lines(str(path)):
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 2 and parts[1].isdigit() and len(parts[1]) >= 15:
+            rows.append((parts[0], parts[1]))
+    return rows
+
+
 def _write_urls(path: Path, known: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = ["handle,video_id"]
@@ -336,11 +348,7 @@ def cmd_resolve(args, settings: Settings) -> int:
     """
     from .providers.http_ssr import HttpSSRProvider
 
-    pairs: list[tuple[str, str]] = []
-    for line in _read_lines(args.urls)[1:]:
-        parts = line.split(",")
-        if len(parts) >= 2:
-            pairs.append((parts[0].strip(), parts[1].strip()))
+    pairs = _read_url_rows(args.urls)
 
     already = store.done_keys(args.store, "video_id")
     todo = [(h, v) for h, v in pairs if v not in already]

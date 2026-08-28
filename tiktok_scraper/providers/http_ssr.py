@@ -53,8 +53,9 @@ class HttpSSRProvider(Provider):
 
     name = "http_ssr"
 
-    def __init__(self, delay_seconds: float = 2.5, **_):
+    def __init__(self, delay_seconds: float = 2.5, retries: int = 2, **_):
         self._delay = delay_seconds
+        self._retries = retries
         self._client = httpx.Client(
             headers={
                 "User-Agent": UA,
@@ -135,9 +136,19 @@ class HttpSSRProvider(Provider):
             raise ProviderError(f"not a TikTok video URL: {url!r}")
         handle, video_id = parsed
 
-        detail = self._scope(self._get(url)).get("webapp.video-detail") or {}
+        # TikTok intermittently serves a page whose SSR blob is missing the
+        # video record entirely. It is transient -- the same URL resolves on a
+        # retry -- so retrying here is the difference between a real row and a
+        # blank one. Measured at roughly one page in five on a first pass.
+        detail: dict = {}
+        for attempt in range(self._retries + 1):
+            detail = self._scope(self._get(url)).get("webapp.video-detail") or {}
+            if detail:
+                break
+            if attempt < self._retries:
+                time.sleep(self._delay * (attempt + 1))
         if not detail:
-            raise ProviderError("no video-detail in page")
+            raise ProviderError("no video-detail in page after retries")
         if detail.get("statusCode"):
             raise ProviderError(
                 f"unavailable ({detail.get('statusCode')}): "
