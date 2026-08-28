@@ -373,6 +373,30 @@ def cmd_resolve(args, settings: Settings) -> int:
     todo = [(h, v) for h, v in pairs if v not in already]
     print(f"{len(pairs)} URLs on file, {len(already)} already resolved, "
           f"{len(todo)} to fetch")
+
+    if args.priority_handles:
+        # There are always more URLs than there is time to fetch, so order
+        # matters: a creator who already has a colostrum video in the store is
+        # far likelier to have another in their back catalogue than an unknown
+        # handle is. Fetching those first means an interrupted run still ends
+        # up with the most on-topic set it could have.
+        # Recompute the topic from the stored caption rather than reading an
+        # is_colostrum column: resolve writes the raw record, and that column
+        # is only filled in later when the sheet is built.
+        from .enrich import is_colostrum as _is_colostrum
+
+        preferred = {
+            record["handle"].lower()
+            for record in store.read(args.store)
+            if record.get("handle") and _is_colostrum(
+                record.get("description"), " ".join(record.get("hashtags") or [])
+            )
+        }
+        if preferred:
+            todo.sort(key=lambda pair: pair[0].lower() not in preferred)
+            hits = sum(1 for h, _ in todo if h.lower() in preferred)
+            print(f"  prioritised {hits} URLs from {len(preferred)} creators "
+                  "already known to post about colostrum")
     if args.max_items:
         todo = todo[: args.max_items]
         print(f"  limited to {len(todo)} this run")
@@ -706,6 +730,9 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Append-only store; a re-run skips what it holds")
     resolve.add_argument("--matched-query", help="Attribution tag for this batch")
     resolve.add_argument("--max-items", type=int, help="Stop after N this run")
+    resolve.add_argument("--priority-handles", action="store_true",
+                         help="Fetch creators already known to post about "
+                              "colostrum first (best use of a limited run)")
     common(resolve)
     resolve.set_defaults(func=cmd_resolve)
 

@@ -146,7 +146,10 @@ class HttpSSRProvider(Provider):
             if detail:
                 break
             if attempt < self._retries:
-                time.sleep(self._delay * (attempt + 1))
+                # The throttle already spaces requests; an escalating backoff
+                # on top of it tripled the cost of the common single-retry
+                # case for no measured gain.
+                time.sleep(self._delay)
         if not detail:
             raise ProviderError("no video-detail in page after retries")
         if detail.get("statusCode"):
