@@ -267,24 +267,51 @@ def cmd_discover(args, settings: Settings) -> int:
         delay_seconds=settings.request_delay_seconds, headless=not args.headed
     )
     added_total = 0
+    # Worklist rather than a plain loop: a discover page links to related
+    # keyword pages, and following the on-topic ones is where most of the
+    # breadth comes from -- a single grid stops at ~60 videos however hard you
+    # scroll it, so more keywords beats more scrolling.
+    from .providers.discover import slugify
+
+    queue = [(k, 0) for k in keywords]
+    seen_slugs: set[str] = set()
+    index = 0
     try:
-        for i, keyword in enumerate(keywords, 1):
+        while index < len(queue):
+            keyword, depth = queue[index]
+            index += 1
+            slug = slugify(keyword)
+            if not slug or slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+
             try:
-                pairs = provider.fetch_discover_urls(keyword, limit=args.per_keyword)
+                pairs, related = provider.fetch_discover_page(
+                    keyword, limit=args.per_keyword
+                )
             except BlockedError as exc:
-                print(f"[{i}/{len(keywords)}] {keyword!r} BLOCKED: {exc}", file=sys.stderr)
+                print(f"[{index}/{len(queue)}] {keyword!r} BLOCKED: {exc}", file=sys.stderr)
                 break
             except ProviderError as exc:
-                print(f"[{i}/{len(keywords)}] {keyword!r} failed: {exc}", file=sys.stderr)
+                print(f"[{index}/{len(queue)}] {keyword!r} failed: {exc}", file=sys.stderr)
                 continue
+
             added = 0
             for handle, video_id in pairs:
                 if video_id not in known:
                     known[video_id] = handle
                     added += 1
             added_total += added
-            print(f"[{i}/{len(keywords)}] {keyword!r}: {len(pairs)} found, {added} new "
-                  f"(total {len(known)})", flush=True)
+
+            queued = 0
+            if depth < args.crawl_depth:
+                for candidate in related:
+                    if candidate not in seen_slugs:
+                        queue.append((candidate, depth + 1))
+                        queued += 1
+
+            print(f"[{index}/{len(queue)}] {keyword!r} (d{depth}): {len(pairs)} found, "
+                  f"{added} new, +{queued} related (total {len(known)})", flush=True)
             _write_urls(out, known)
     finally:
         provider.close()
@@ -457,6 +484,9 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Max video URLs per keyword (default 120)")
     discover.add_argument("--urls-out", default="data/output/discovered_urls.csv",
                           help="Where the deduped handle,video_id list accumulates")
+    discover.add_argument("--crawl-depth", type=int, default=0,
+                          help="Follow on-topic related keyword pages this many "
+                               "hops deep (default 0, i.e. seed keywords only)")
     common(discover)
     discover.set_defaults(func=cmd_discover)
 
