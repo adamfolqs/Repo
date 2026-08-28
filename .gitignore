@@ -19,3 +19,4 @@ data/raw/
 service_account.json
 token.json
 venv/
+logs/
