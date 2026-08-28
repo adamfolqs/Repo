@@ -349,6 +349,27 @@ def main() -> int:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     wb.save(OUT)
 
+    # Per-tab CSVs as well. The workbook is the deliverable, but uploading it
+    # anywhere that only accepts content inline means shipping ~300 kB of
+    # base64 where a single wrong character corrupts the whole file; the same
+    # data as text degrades to one wrong cell instead.
+    csv_dir = OUT.parent / "tabs"
+    csv_dir.mkdir(exist_ok=True)
+    for name, columns, rows in [
+        ("Videos", video_columns, [video_row(v, video_columns) for v in qualifying]),
+        ("Creators", creator_columns, creator_rows),
+        ("Original Sheet + Handles", ORIGINAL_HEADER, original_rows),
+        ("Objection Research", video_columns,
+         [video_row(v, video_columns) for v in skeptical]),
+        ("All Colostrum Videos", video_columns,
+         [video_row(v, video_columns) for v in colostrum_sorted]),
+    ]:
+        path = csv_dir / f"{name.replace(' ', '_').replace('+', 'and')}.csv"
+        with path.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(columns)
+            writer.writerows(rows)
+
     # ---- report ----------------------------------------------------------
     langs: dict[str, int] = defaultdict(int)
     brands: dict[str, int] = defaultdict(int)
