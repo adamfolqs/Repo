@@ -185,10 +185,28 @@ Two things bite in a sandboxed environment, both already handled in
 
 ## Sourcing creators from TikTok Shop product pages
 
-The reliable way to build a creator list. A Shop product page lists the actual
-creators posting about that exact product, with canonical `@handles` — far
-better than matching display names, which are not unique and are often
-misread when taken from a screen recording.
+**This no longer works, and the `shop` command cannot fix it.** A Shop product
+page shows a creator-video section *in the app*, but the web PDP does not ship
+it. Checked on desktop and mobile user agents and across `shop.tiktok.com/us/pdp/`,
+`shop.tiktok.com/view/product/` and `www.tiktok.com/shop/pdp/`: the page data
+carries product, price and reviews, and zero `author` / `aweme` / `unique_id`
+fields. Review authors are anonymised (`B**8`), so they are not handles either.
+
+What still works is resolving the product links themselves — a short share link
+redirects to a PDP whose URL carries the product id and title. That is how the
+seven competitor products were confirmed (Micro Ingredients, Physician's Choice,
+Miracle Moo, Bloom Nutrition, Nutricost, ARMRA, Lemme). Their creators are then
+sourced by running those brand names through `discover`, which reaches the same
+people by a working door.
+
+> Careful with resolved share links: they embed the *sharing* account's
+> `unique_id` and `user_id`. Don't paste them anywhere public — only the product
+> id and title are kept in `data/output/competitor_products.json`.
+
+The original rationale, still true and still why handles matter:
+creator sourcing by *display name* is unreliable — names are not unique on
+TikTok and OCR'd names are often wrong or truncated, so a canonical `@handle`
+is worth much more than a name.
 
 ```bash
 # 1. Get creators + their videos from the product pages
