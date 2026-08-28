@@ -192,7 +192,21 @@ def cmd_run(args, settings: TrackerSettings) -> int:
         except Exception as exc:
             print(f"  sample tracker unavailable: {exc}", file=sys.stderr)
     if metrics.samples_sent is not None and not samples_source:
-        samples_source = "read from a screenshot"
+        samples_source = "read from the Orders tab (free-sample tag)"
+
+    # The authoritative count is the free-sample-tagged order total in Seller
+    # Center. The PO tracker is a second, partial view of the same thing, so a
+    # disagreement is worth surfacing rather than silently preferring either.
+    notes: list[str] = []
+    if (samples is not None and metrics.samples_sent is not None
+            and samples_source != "counted from the sample tracker"
+            and metrics.samples_sent != samples.units):
+        notes.append(
+            f"Samples Sent is {metrics.samples_sent} ({samples_source}), but the "
+            f"sample tracker shows {samples.units} units across {samples.rows} POs. "
+            "The tracker only sees warehouse POs, so a gap is expected -- worth a "
+            "glance if it is large."
+        )
 
     # ---- 4. derive + cross-check
     metrics, discrepancies = derive(metrics)
@@ -232,6 +246,7 @@ def cmd_run(args, settings: TrackerSettings) -> int:
         week=week, metrics=metrics, deltas=deltas(metrics, previous),
         discrepancies=discrepancies,
         missing=metrics.missing(), skipped=skipped, unreadable=unreadable,
+        notes=notes,
         samples=samples, samples_source=samples_source or "not set",
         sheet_url=SHEET_URL.format(sheet_id=settings.wiki_sheet_id),
         screenshots=len(screenshots), dry_run=args.dry_run,

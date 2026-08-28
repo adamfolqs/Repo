@@ -44,6 +44,7 @@ class Report:
     missing: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     unreadable: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
     samples: Optional[SampleCount] = None
     samples_source: str = ""
     sheet_url: str = ""
@@ -63,7 +64,7 @@ class Report:
     @property
     def needs_attention(self) -> bool:
         return bool(self.discrepancies or self.missing or self.skipped
-                    or self.unreadable or self.no_input)
+                    or self.unreadable or self.notes or self.no_input)
 
     def subject(self) -> str:
         prefix = "[DRY RUN] " if self.dry_run else ""
@@ -87,6 +88,8 @@ class Report:
             lines.append(f"CHECK  {d}")
         for item in self.unreadable:
             lines.append(f"UNREAD {item}")
+        for item in self.notes:
+            lines.append(f"NOTE   {item}")
         for label in self.missing:
             lines.append(f"EMPTY  {label} - no value found, cell left blank")
         for item in self.skipped:

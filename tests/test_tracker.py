@@ -258,6 +258,16 @@ def test_digest_renders_and_flags_what_needs_a_human():
     print("digest OK")
 
 
+def test_cross_source_note_reaches_the_digest():
+    """A samples figure that disagrees with the PO tracker must be surfaced."""
+    report = Report(week=week_containing(date(2026, 7, 5)),
+                    metrics=WeeklyMetrics(gmv=1.0), screenshots=2,
+                    notes=["Samples Sent is 47, but the sample tracker shows 12"])
+    assert report.needs_attention
+    assert "NOTE" in report.text() and "47" in report.telegram()
+    print("cross-source note OK")
+
+
 def test_an_empty_inbox_is_flagged_loudly():
     """A scheduled run can fire before anyone drops the screenshots in."""
     report = Report(week=week_containing(date(2026, 7, 5)),
@@ -290,6 +300,7 @@ TESTS = [
     test_rerun_is_idempotent_and_protects_manual_edits,
     test_sample_counting_from_the_po_tracker,
     test_digest_renders_and_flags_what_needs_a_human,
+    test_cross_source_note_reaches_the_digest,
     test_an_empty_inbox_is_flagged_loudly,
     test_cell_parsing_and_coercion_round_trip,
 ]

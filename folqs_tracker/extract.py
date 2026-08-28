@@ -65,7 +65,14 @@ class ExtractedMetrics(BaseModel):
 
     affiliate_gmv: Optional[float] = Field(None, description="GMV attributed to affiliate/creator content")
     videos_posted: Optional[int] = Field(None, description="Affiliate videos posted in the period")
-    samples_sent: Optional[int] = Field(None, description="Only if a dashboard states it; usually null")
+    samples_sent: Optional[int] = Field(
+        None,
+        description="Free samples shipped. Read from the Orders tab filtered by "
+                    "Order Tag = the free-sample options, which shows a total like "
+                    "'47 orders'. Only report this when the screenshot clearly shows "
+                    "that free-sample order-tag filter applied AND the correct date "
+                    "range; an unfiltered order count is NOT the sample count.",
+    )
 
     gmv_max_cost: Optional[float] = Field(None, description="PAID ADS spend (GMV Max) only")
     gmv_max_orders: Optional[int] = Field(None, description="PAID ADS attributed orders only")

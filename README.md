@@ -201,8 +201,10 @@ python -m folqs_tracker notify-test # proves the email and Telegram actually arr
 
 ## Weekly use
 
-Drop the week's analytics screenshots in `data/tracking/inbox/` (that folder's
-README lists which screens to capture), then:
+Drop the week's analytics screenshots in `data/tracking/inbox/` — that folder's
+README lists the exact Seller Center paths for each metric, which span Shop
+analytics, Product analytics, the Creator tab, the Orders tab (free-sample
+order tag), Ads Manager and Account Health. Then:
 
 ```bash
 python -m folqs_tracker run --dry-run --print-report   # read + report, write nothing
