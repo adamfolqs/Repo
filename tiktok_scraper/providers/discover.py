@@ -43,13 +43,15 @@ _RELEVANT_SLUG_HINTS = (
 # straight into the generic wellness corpus ('gut-health-meaning' and its own
 # 16 neighbours), and since resolving a video costs a request each, a low-
 # precision branch is paid for in the stage that is actually the bottleneck.
-# Farming/veterinary language: "bovine" pulls in a large agricultural corpus
-# that shares the word but nothing else.
+# Farming/veterinary language. Note what is deliberately NOT here: 'bovino',
+# 'bovina' and 'bovinos' are the Spanish *product* words ("calostro bovino"),
+# so excluding them would throw away exactly the Spanish-language content the
+# brief asks for. Only terms with no consumer-supplement reading belong here.
 _IRRELEVANT_SLUG_HINTS = (
-    "bovinos", "bovina", "bovino", "razas", "inseminar", "insemination",
-    "inseminatrice", "engorde", "curral", "confinamento", "steakhouse",
-    "restaurante", "gelatina", "grenetina", "carne", "vacuno", "ganado",
-    "veterinar", "cisticercose", "gabarro", "comederos", "saleros",
+    "razas", "inseminar", "insemination", "inseminatrice", "engorde",
+    "curral", "confinamento", "steakhouse", "restaurante", "gelatina",
+    "grenetina", "vacuno", "ganado", "veterinar", "cisticercose", "gabarro",
+    "comederos", "saleros", "bezerro", "ternero", "becerro", "ordeño",
 )
 
 
@@ -58,10 +60,19 @@ def slugify(keyword: str) -> str:
 
 
 def is_relevant_slug(slug: str) -> bool:
-    """Whether a related discover slug is worth following."""
-    if any(bad in slug for bad in _IRRELEVANT_SLUG_HINTS):
+    """Whether a related discover slug is worth following.
+
+    The topic test wins over the exclusion test, and must: the farming
+    vocabulary overlaps the Spanish product vocabulary, so checking exclusions
+    first threw away 'calostro-bovino-opiniones' -- an exact match for what we
+    are looking for -- because it contains 'bovino'. Exclusions only decide
+    slugs that named no colostrum term of their own.
+    """
+    if not any(hint in slug for hint in _RELEVANT_SLUG_HINTS):
         return False
-    return any(hint in slug for hint in _RELEVANT_SLUG_HINTS)
+    # Named the topic, but in a farming/veterinary sense ("calostro para
+    # bezerros") -- that is a different audience entirely.
+    return not any(bad in slug for bad in _IRRELEVANT_SLUG_HINTS)
 
 
 class DiscoverProvider(PlaywrightProvider):
