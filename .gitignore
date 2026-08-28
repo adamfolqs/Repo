@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+.pytest_cache/
+
+# Secrets — never commit
+service_account.json
+credentials.json
+token.json
+
+# Scraped output is data, not source
+data/output/*
+!data/output/.gitkeep
+.cache/
