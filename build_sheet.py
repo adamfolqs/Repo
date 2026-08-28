@@ -156,6 +156,14 @@ def match_original_sheet(videos, creators):
                 if row.get("handle"):
                     prior[normalize_name(row.get("name"))] = row
 
+    # Handles verified this run by opening the profile (see handles.py).
+    verified: dict[str, dict] = {}
+    resolution_path = Path("data/output/name_resolution.csv")
+    if resolution_path.exists():
+        with resolution_path.open(encoding="utf-8-sig") as fh:
+            for row in csv.DictReader(fh):
+                verified[normalize_name(row.get("name"))] = row
+
     wb = load_workbook(ORIGINAL, data_only=True)
     ws = wb["Creator Videos"]
     rows = list(ws.iter_rows(values_only=True))
@@ -176,6 +184,25 @@ def match_original_sheet(videos, creators):
             profile = hit.get("profile_url") or f"https://www.tiktok.com/@{handle}"
             status = hit.get("confidence") or "confirmed"
             evidence = hit.get("evidence") or "manual lookup, previous session"
+            # Two accounts can carry the same display name. Where this run
+            # landed on a different one, say so rather than quietly keeping
+            # either -- the earlier lookup has video evidence behind it, so it
+            # wins, but the disagreement is worth a human glance.
+            other = verified.get(key, {}).get("handle")
+            if other and other.lower() != handle.lower():
+                status = "confirmed, but a second account shares this name"
+                evidence += f" | also verified: @{other} displays the same name"
+
+        if not handle and key in verified:
+            row_hit = verified[key]
+            if row_hit.get("handle"):
+                handle = row_hit["handle"]
+                profile = row_hit.get("profile_url") or f"https://www.tiktok.com/@{handle}"
+                status = row_hit.get("confidence") or "confirmed"
+                evidence = row_hit.get("evidence") or ""
+            elif row_hit.get("confidence"):
+                status = row_hit["confidence"]
+                evidence = row_hit.get("evidence") or ""
 
         if not handle:
             candidates = [
