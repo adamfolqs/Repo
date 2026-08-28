@@ -119,6 +119,70 @@ handling, and schema/sink agreement. No network required.
 - If `playwright` starts returning `BlockedError`, that is the IP, not the code —
   switch provider or route through a residential IP.
 
+## What each TikTok surface actually serves
+
+Measured from this egress path, not assumed. This is the map the sourcing
+pipeline is built around, and the thing worth re-checking first if results
+suddenly drop:
+
+| Surface | Serves data? | How |
+|---|---|---|
+| `/@handle` | **yes** | SSR blob: profile + follower/like counts |
+| `/@handle/video/<id>` | **yes** | SSR blob: exact like/view/comment/share/save |
+| `/embed/@handle` | **yes** | state blob: 10 most recent posts, no pagination |
+| `/discover/<keyword>` | **yes** | client-rendered grid, ~60 videos, needs a browser |
+| `/search?q=` | no | login-walled — renders skeletons, results XHR never fires |
+| `/tag/<hashtag>` | no | client-rendered, nothing behind it |
+| profile video grid | no | login-walled; `/api/post/item_list/` needs signed params |
+| `shop.tiktok.com` PDP | partial | product data yes, creator videos are in-app only |
+
+The consequence: **discovery and enrichment are separate problems.** Keyword
+pages are the only surface that will name videos it has not been asked about,
+and they carry no engagement numbers. Every number comes from opening the
+video's own page afterwards.
+
+Note the earlier finding that `www.tiktok.com` captcha-walls profile pages did
+**not** reproduce here — profile and video pages served full SSR data. Check
+before assuming you need a paid provider; the wall is IP-dependent.
+
+### The pipeline
+
+```bash
+# 1. keywords -> video URLs (browser; follows related keyword pages)
+python -m tiktok_scraper discover --keyword-file data/input/discover_keywords.txt \
+    --per-keyword 150 --crawl-depth 2
+
+# 2. every creator found -> their other recent posts, added to the same list
+python -m tiktok_scraper catalogue
+
+# 3. video URLs -> full rows with real numbers (plain HTTP, no browser)
+python -m tiktok_scraper resolve
+
+# 4. handles -> follower count + bio email
+python -m tiktok_scraper profiles
+
+# 5. assemble the workbook
+python build_sheet.py
+```
+
+Each stage appends to a JSONL store and skips ids already in it, so a stage
+that dies partway **resumes rather than restarts**. The full sweep takes hours
+at a polite request rate, so this matters more than it looks.
+
+### Running a browser behind an egress proxy
+
+Two things bite in a sandboxed environment, both already handled in
+`playwright_provider.py` but worth knowing:
+
+- Chromium's TLS 1.3 ClientHello carries a post-quantum key share (~1.8 kB).
+  Some proxies answer it with a TLS alert and drop the tunnel, so *every*
+  navigation fails as `ERR_CONNECTION_RESET` — for all hosts, which is how you
+  tell it apart from TikTok blocking you. The fix is `--ssl-version-max=tls1.2`,
+  not `--ignore-certificate-errors`.
+- Don't test for a captcha by matching `/captcha/` in the HTML. The captcha
+  SDK's asset URL is bundled into every normal TikTok page, so that reports a
+  wall on pages that loaded perfectly.
+
 ## Sourcing creators from TikTok Shop product pages
 
 The reliable way to build a creator list. A Shop product page lists the actual
