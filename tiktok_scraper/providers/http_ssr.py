@@ -208,17 +208,55 @@ class HttpSSRProvider(Provider):
             source=self.name,
         )
 
-    def fetch_creator_videos(self, handle: str, limit: int = 30) -> list[Video]:
-        """Not available over SSR.
+    def fetch_creator_video_ids(self, handle: str, limit: int = 10) -> list[str]:
+        """Recent video ids for one creator, from their oEmbed profile page.
 
-        A logged-out profile page ships the profile record but not the video
-        grid; `/api/post/item_list/` needs signed params. Video URLs have to
-        come from discovery instead.
+        The profile page's own grid is login-walled and `/api/post/item_list/`
+        needs signed params, but `/embed/@handle` is built to be rendered by
+        logged-out third parties and ships a `videoList` in its state blob.
+
+        It holds the 10 most recent posts and does not paginate, so this is a
+        recent-catalogue sample, not a creator's full history -- enough to find
+        the other colostrum posts of someone who posts about it regularly.
         """
-        raise NotImplementedError(
-            "profile video grids are login-walled; use the discover provider "
-            "to source video URLs, then fetch_video() on each"
+        handle = handle.lstrip("@")
+        html = self._get(f"https://www.tiktok.com/embed/@{handle}")
+
+        match = re.search(
+            r'id="__FRONTITY_CONNECT_STATE__"[^>]*>(.*?)</script>', html, re.DOTALL
         )
+        if not match:
+            raise ProviderError(f"no embed state for @{handle}")
+        try:
+            state = json.loads(match.group(1))
+        except json.JSONDecodeError as exc:
+            raise ProviderError(f"unparseable embed state for @{handle}") from exc
+
+        data = (state.get("source") or {}).get("data") or {}
+        for key, payload in data.items():
+            if not isinstance(payload, dict) or "videoList" not in payload:
+                continue
+            ids = []
+            for item in payload.get("videoList") or []:
+                video_id = str(item.get("id") or "")
+                # Guard against a shared/duetted post from another account
+                # being read as this creator's own.
+                author = (item.get("authorUniqueId") or handle).lower()
+                if video_id.isdigit() and author == handle.lower():
+                    ids.append(video_id)
+            return ids[:limit]
+        raise ProviderError(f"no videoList in embed for @{handle}")
+
+    def fetch_creator_videos(self, handle: str, limit: int = 30) -> list[Video]:
+        """Recent videos for one creator, fully resolved."""
+        videos = []
+        for video_id in self.fetch_creator_video_ids(handle, limit=limit):
+            url = f"https://www.tiktok.com/@{handle}/video/{video_id}"
+            try:
+                videos.append(self.fetch_video(url, matched_query=f"catalogue:{handle}"))
+            except ProviderError:
+                continue
+        return videos
 
     def close(self) -> None:
         try:

@@ -382,6 +382,80 @@ def cmd_resolve(args, settings: Settings) -> int:
     return 0
 
 
+def cmd_catalogue(args, settings: Settings) -> int:
+    """Stage 1b: add each known creator's other recent posts to the URL list.
+
+    One creator who posts about colostrum usually has several such posts, and
+    discovery only surfaces whichever one ranked for a keyword. This walks
+    every handle already found and adds their recent catalogue, which `resolve`
+    then picks up like any other URL.
+    """
+    from .providers.http_ssr import HttpSSRProvider
+
+    handles = sorted({
+        record["handle"] for record in store.read(args.from_store)
+        if record.get("handle")
+    })
+    handles.extend(_resolve_handles(args))
+
+    seen, ordered = set(), []
+    for handle in handles:
+        if handle.lower() not in seen:
+            seen.add(handle.lower())
+            ordered.append(handle)
+
+    out = Path(args.urls_out)
+    known: dict[str, str] = {}
+    if out.exists():
+        for handle, video_id in _read_url_rows(out):
+            known[video_id] = handle
+
+    done = set()
+    done_path = Path(args.done_file)
+    if done_path.exists():
+        done = {h.strip().lower() for h in done_path.read_text().split() if h.strip()}
+    todo = [h for h in ordered if h.lower() not in done]
+
+    print(f"{len(ordered)} creators, {len(done)} already walked, {len(todo)} to go; "
+          f"{len(known)} URLs on file")
+    if args.max_items:
+        todo = todo[: args.max_items]
+
+    provider = HttpSSRProvider(delay_seconds=settings.request_delay_seconds)
+    added_total = 0
+    try:
+        for i, handle in enumerate(todo, 1):
+            try:
+                ids = provider.fetch_creator_video_ids(handle, limit=args.per_creator)
+            except BlockedError as exc:
+                print(f"  BLOCKED: {exc}", file=sys.stderr)
+                break
+            except ProviderError as exc:
+                print(f"  [{i}] @{handle}: {exc}", file=sys.stderr)
+                ids = []
+            added = 0
+            for video_id in ids:
+                if video_id not in known:
+                    known[video_id] = handle
+                    added += 1
+            added_total += added
+            done.add(handle.lower())
+            if i % 20 == 0 or added:
+                print(f"  [{i}/{len(todo)}] @{handle}: {len(ids)} posts, {added} new "
+                      f"(total {len(known)})", flush=True)
+            if i % 10 == 0:
+                _write_urls(out, known)
+                done_path.write_text("\n".join(sorted(done)) + "\n")
+    finally:
+        provider.close()
+
+    _write_urls(out, known)
+    done_path.parent.mkdir(parents=True, exist_ok=True)
+    done_path.write_text("\n".join(sorted(done)) + "\n")
+    print(f"\n{added_total} new URLs from back catalogues -> {out}")
+    return 0
+
+
 def cmd_profiles(args, settings: Settings) -> int:
     """Stage 3: follower count and bio (hence contact email) per creator."""
     from .providers.http_ssr import HttpSSRProvider
@@ -509,6 +583,23 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("--max-items", type=int, help="Stop after N this run")
     common(resolve)
     resolve.set_defaults(func=cmd_resolve)
+
+    catalogue = sub.add_parser(
+        "catalogue",
+        help="Add each found creator's other recent posts to the URL list",
+    )
+    catalogue.add_argument("--from-store", default="data/output/videos.jsonl")
+    catalogue.add_argument("--input", help="CSV/XLSX to read extra handles from")
+    catalogue.add_argument("--column", help="Which column holds the handle")
+    catalogue.add_argument("--handles", help="Comma-separated extra handles")
+    catalogue.add_argument("--urls-out", default="data/output/discovered_urls.csv")
+    catalogue.add_argument("--done-file", default="data/output/catalogue_done.txt",
+                           help="Handles already walked, so a re-run resumes")
+    catalogue.add_argument("--per-creator", type=int, default=10,
+                           help="Max posts per creator (the embed serves 10)")
+    catalogue.add_argument("--max-items", type=int, help="Stop after N this run")
+    common(catalogue)
+    catalogue.set_defaults(func=cmd_catalogue)
 
     profiles = sub.add_parser(
         "profiles", help="Follower count + bio email for each creator"
