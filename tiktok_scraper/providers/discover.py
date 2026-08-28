@@ -37,8 +37,12 @@ _RELEVANT_SLUG_HINTS = (
     "armra", "miracle-moo", "miraclemoo", "micro-moo", "wondercow", "wonder-cow",
     "cowabunga", "cowboy", "rhea", "wellah", "cymbiotika", "lemme", "nutricost",
     "bloom-nutrition", "micro-ingredients", "physicians-choice", "magic-milk",
-    "gut-health", "guthealth", "leaky-gut", "bloating", "bloated", "gut-healing",
 )
+# Adjacent wellness terms are useful as *seeds* -- plenty of colostrum content
+# ranks under them -- but must not be crawled onwards. Following them walked
+# straight into the generic wellness corpus ('gut-health-meaning' and its own
+# 16 neighbours), and since resolving a video costs a request each, a low-
+# precision branch is paid for in the stage that is actually the bottleneck.
 # Farming/veterinary language: "bovine" pulls in a large agricultural corpus
 # that shares the word but nothing else.
 _IRRELEVANT_SLUG_HINTS = (
