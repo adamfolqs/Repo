@@ -176,6 +176,27 @@ class WeeklyTrackerSheet:
                     data[row.field] = coerce(row.field, value)
         return WeeklyMetrics(**data) if data else WeeklyMetrics()
 
+    def completeness(self, label: str) -> tuple[int, int]:
+        """(filled cells, total metric rows) for a week's column.
+
+        Backfill uses this to tell an untouched week from a half-typed one, and
+        to leave finished weeks alone.
+        """
+        total = sum(len(s.rows) for s in SECTIONS)
+        col = self.find_column(label)
+        if col is None:
+            return 0, total
+        filled = 0
+        for section in SECTIONS:
+            index = next((s for s in self.sections if s.header == section.header), None)
+            if index is None:
+                continue
+            for row in section.rows:
+                at = index.rows.get(_norm(row.label))
+                if at is not None and self._cell(at, col).strip():
+                    filled += 1
+        return filled, total
+
     # ---------------------------------------------------------------- writing
 
     def plan_write(

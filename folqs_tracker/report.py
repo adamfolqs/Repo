@@ -220,3 +220,110 @@ class Report:
         if self.sheet_url:
             lines += ["", self.sheet_url]
         return "\n".join(lines)[:4000]
+
+
+@dataclass
+class WeekOutcome:
+    """What happened to one week during a backfill."""
+
+    week: Week
+    written: int = 0                  # cells written
+    filled_before: int = 0
+    total_rows: int = 0
+    metrics: Optional[WeeklyMetrics] = None
+    skipped: bool = False             # already complete, left alone
+    error: str = ""
+
+    @property
+    def status(self) -> str:
+        if self.error:
+            return "FAILED"
+        if self.skipped:
+            return "already complete"
+        return f"{self.written} cell(s) written"
+
+
+@dataclass
+class BackfillReport:
+    """One digest for a whole catch-up run.
+
+    Deliberately a single message rather than one per week: six separate
+    emails for six historical weeks is noise, and the thing worth reading is
+    the shape of the whole catch-up.
+    """
+
+    outcomes: list[WeekOutcome] = field(default_factory=list)
+    sheet_url: str = ""
+    dry_run: bool = False
+
+    @property
+    def failed(self) -> list[WeekOutcome]:
+        return [o for o in self.outcomes if o.error]
+
+    @property
+    def written(self) -> list[WeekOutcome]:
+        return [o for o in self.outcomes if not o.error and not o.skipped]
+
+    def subject(self) -> str:
+        prefix = "[DRY RUN] " if self.dry_run else ""
+        span = (f"{self.outcomes[0].week.label} to {self.outcomes[-1].week.label}"
+                if self.outcomes else "nothing to do")
+        tail = f" - {len(self.failed)} failed" if self.failed else ""
+        return f"{prefix}Folqs tracker backfill: {span}{tail}"
+
+    def text(self) -> str:
+        out = ["Folqs weekly tracker - backfill", ""]
+        if self.dry_run:
+            out += ["DRY RUN - nothing was written to the sheet.", ""]
+        if not self.outcomes:
+            return "\n".join(out + ["No weeks needed filling."])
+
+        for outcome in self.outcomes:
+            line = f"{outcome.week.label}  {outcome.status}"
+            if outcome.metrics and outcome.metrics.gmv is not None:
+                line += f"  (GMV {format_value(outcome.metrics.gmv, 'money')})"
+            out.append(line)
+            if outcome.error:
+                out.append(f"    {outcome.error}")
+
+        out += ["", f"{len(self.written)} week(s) filled, "
+                    f"{len(self.failed)} failed, "
+                    f"{len(self.outcomes) - len(self.written) - len(self.failed)} skipped"]
+        if self.sheet_url:
+            out += ["", f"Sheet: {self.sheet_url}"]
+        return "\n".join(out)
+
+    def html_body(self) -> str:
+        rows = []
+        for outcome in self.outcomes:
+            colour = "#b91c1c" if outcome.error else ("#6b7280" if outcome.skipped else "#047857")
+            detail = html.escape(outcome.error) if outcome.error else outcome.status
+            rows.append(
+                "<tr>"
+                f"<td style='padding:4px 8px;border-top:1px solid #eee'>{html.escape(outcome.week.label)}</td>"
+                f"<td style='padding:4px 8px;border-top:1px solid #eee;color:{colour}'>{detail}</td>"
+                "</tr>")
+        banner = ("<p style='background:#fef3c7;padding:8px 12px;border-radius:6px'>"
+                  "<b>Dry run</b> - nothing was written.</p>") if self.dry_run else ""
+        link = (f"<p style='margin-top:14px'><a href='{html.escape(self.sheet_url)}'>"
+                "Open the tracker</a></p>") if self.sheet_url else ""
+        return ("<div style=\"font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
+                "max-width:640px;color:#111\">"
+                "<h2 style='margin:0 0 12px'>Weekly tracker backfill</h2>"
+                f"{banner}"
+                "<table style='border-collapse:collapse;width:100%;font-size:14px'>"
+                + "".join(rows) + "</table>"
+                f"<p style='margin-top:14px;font-size:13px;color:#374151'>"
+                f"{len(self.written)} filled &middot; {len(self.failed)} failed &middot; "
+                f"{len(self.outcomes) - len(self.written) - len(self.failed)} skipped</p>"
+                f"{link}</div>")
+
+    def telegram(self) -> str:
+        lines = ["Folqs tracker backfill"]
+        if self.dry_run:
+            lines.append("(dry run)")
+        lines += [f"{o.week.label}: {o.status}" for o in self.outcomes[:12]]
+        lines += ["", f"{len(self.written)} filled, {len(self.failed)} failed"]
+        if self.sheet_url:
+            lines += ["", self.sheet_url]
+        return "\n".join(lines)[:4000]

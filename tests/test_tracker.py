@@ -81,7 +81,17 @@ class FakeWorksheet:
         return [list(r) for r in self._values]
 
     def batch_update(self, updates, value_input_option=None):
+        import gspread.utils as gutils
         self.applied.extend(updates)
+        for update in updates:
+            row, col = gutils.a1_to_rowcol(update["range"])
+            while len(self._values) < row:
+                self._values.append([])
+            line = self._values[row - 1]
+            while len(line) < col:
+                line.append("")
+            line[col - 1] = update["values"][0][0]
+        self.col_count = max(self.col_count, max(len(r) for r in self._values))
 
     def add_cols(self, count):
         self.added_cols += count
@@ -417,6 +427,67 @@ def test_archiving_the_same_week_three_times_loses_nothing():
     print("archive collisions OK")
 
 
+# ---------------------------------------------------------------- backfill
+
+def test_backfill_walks_weeks_in_order_and_appends_columns():
+    """Catching up must produce chronological columns and skip finished weeks."""
+    import folqs_tracker.cli as cli
+    from folqs_tracker.sheets import WeeklyTrackerSheet
+
+    ws = FakeWorksheet(GRID)
+    WeeklyTrackerSheet.open = classmethod(
+        lambda cls, *a, **k: cls(ws, ws.get_all_values()))
+
+    produced = {
+        "17/07–23/07": WeeklyMetrics(gmv=770.93, orders=20),
+        "24/07–30/07": WeeklyMetrics(gmv=900.00, orders=25),
+        "31/07–06/08": WeeklyMetrics(gmv=1100.00, orders=30),
+    }
+
+    def fake_collect(week, args, settings, *_):
+        if week.label not in produced:
+            raise RuntimeError("no screenshots for this week")
+        metrics, _ = derive(produced[week.label])
+        return metrics
+
+    cli._collect_week = fake_collect
+    cli._snapshot = lambda *a, **k: Path("x")
+    cli._deliver = lambda *a, **k: []
+
+    args = cli.build_parser().parse_args(
+        ["backfill", "--from", "17/07-23/07", "--to", "07/08-13/08",
+         "--year", "2026", "--no-notify"])
+    rc = cli.cmd_backfill(args, cli.TrackerSettings.load())
+
+    sheet = WeeklyTrackerSheet(ws, ws.get_all_values())
+    labels = sheet.week_labels()
+    assert labels == [W1, W2, "17/07–23/07", "24/07–30/07", "31/07–06/08"], labels
+    assert sheet.read_week("24/07–30/07").gmv == 900.00
+    assert sheet.read_week("31/07–06/08").orders == 30
+    # W1 and W2 were already complete and must be untouched.
+    assert sheet.read_week(W1).gmv == 4061.21
+    # The fourth week had no data; it fails without stopping the earlier three.
+    assert rc == 1, "a failed week should surface as a non-zero exit"
+    print("backfill ordering OK")
+
+
+def test_backfill_skips_weeks_that_are_already_complete():
+    import folqs_tracker.cli as cli
+    from folqs_tracker.sheets import WeeklyTrackerSheet
+
+    ws = FakeWorksheet(GRID)
+    sheet = WeeklyTrackerSheet(ws, ws.get_all_values())
+    filled, total = sheet.completeness(W1)
+    assert filled >= cli.COMPLETE_ENOUGH, f"{filled}/{total} should count as complete"
+    assert sheet.completeness("31/12–06/01") == (0, total)
+
+    # The first incomplete week before a complete one is found by walking back.
+    from folqs_tracker.weeks import parse_label
+    first = cli._first_incomplete(sheet, parse_label("31/07–06/08", 2026))
+    assert first.label == "17/07–23/07", first.label
+    print("backfill skipping OK")
+
+
 TESTS = [
     test_weeks_match_the_trackers_own_history,
     test_derivations_reproduce_the_sheet,
@@ -442,6 +513,8 @@ TESTS = [
     test_a_fractional_count_cell_does_not_abandon_the_write,
     test_capture_filenames_come_from_the_full_plan,
     test_archiving_the_same_week_three_times_loses_nothing,
+    test_backfill_walks_weeks_in_order_and_appends_columns,
+    test_backfill_skips_weeks_that_are_already_complete,
 ]
 
 if __name__ == "__main__":

@@ -39,6 +39,9 @@ class Week:
     def previous(self) -> "Week":
         return Week(self.start - timedelta(days=7), self.end - timedelta(days=7))
 
+    def next(self) -> "Week":
+        return Week(self.start + timedelta(days=7), self.end + timedelta(days=7))
+
     def __str__(self) -> str:
         return self.label
 
@@ -59,6 +62,21 @@ def last_complete_week(today: date | None = None) -> Week:
     today = today or date.today()
     current = week_containing(today)
     return current if today > current.end else current.previous()
+
+
+def weeks_between(first: Week, last: Week) -> list[Week]:
+    """Every week from `first` to `last` inclusive, chronological.
+
+    Order matters: the tracker appends each new week as the next column, so
+    backfilling out of order would leave the sheet's columns non-chronological.
+    """
+    if first.start > last.start:
+        return []
+    out, current = [], first
+    while current.start <= last.start:
+        out.append(current)
+        current = current.next()
+    return out
 
 
 def parse_label(label: str, reference_year: int) -> Week | None:

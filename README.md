@@ -258,6 +258,36 @@ Two guards make automated capture safe to leave unattended:
   screenshot just fine — the assertion is what stops one being saved as data.
   A screen that fails is reported in the digest; the other five still run.
 
+## Catching up on missed weeks
+
+The tracker had drifted about six weeks behind. `backfill` runs the ordinary
+weekly pipeline once per week over a range:
+
+```bash
+python -m folqs_tracker backfill --dry-run          # show the plan, write nothing
+python -m folqs_tracker backfill --capture          # collect and fill each week
+python -m folqs_tracker backfill --from 17/07-23/07 --to 21/08-27/08
+```
+
+With no `--from` it starts at the first week that is not already complete, and
+with no `--to` it stops at the last complete week. Weeks that already have
+their numbers are skipped (`--redo` forces them), and existing cells are kept
+unless you pass `--overwrite`.
+
+Three things make it safe to point at a long range:
+
+- **Weeks are processed oldest first.** The tab appends each new week as the
+  next column, so order is structural, not cosmetic. The sheet is re-read after
+  each write so the following week lands in the column after it.
+- **One bad week does not cost the others.** A week whose screenshots are
+  missing or unreadable is recorded as failed and the run continues; the exit
+  code is non-zero and the digest names it. The exception is an expired login,
+  which stops the run, because every later week would fail identically.
+- **One digest for the whole catch-up**, not six emails.
+
+With `--capture` this is a lot of browser work and one vision call per week, so
+it prints what it is about to spend before it starts.
+
 ## Scheduling
 
 ```bash

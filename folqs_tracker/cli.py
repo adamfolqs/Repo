@@ -22,9 +22,10 @@ from .capture import (CaptureError, SessionExpired, calibrate, capture_all,
 from .config import TrackerSettings
 from .derive import derive, deltas
 from .models import ALL_ROWS, WeeklyMetrics, coerce
-from .report import Report
+from .report import BackfillReport, Report, WeekOutcome
 from .samples import SampleCount, count_samples
-from .weeks import Week, last_complete_week, parse_label, week_containing
+from .weeks import (Week, last_complete_week, parse_label, week_containing,
+                    weeks_between)
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
 _FIELDS = {row.field for row in ALL_ROWS} | {"gmv_max_revenue"}
@@ -418,6 +419,176 @@ def cmd_capture(args, settings: TrackerSettings) -> int:
     return 1 if result.failed and not result.saved else 0
 
 
+# A finished column has every row a screenshot can supply. Retainer payments
+# come from the expense tracker, so a week is "complete enough" below the total.
+COMPLETE_ENOUGH = 18
+
+
+def _week_arg(value: str, year: int | None) -> Week:
+    parsed = parse_label(value, year or date.today().year)
+    if parsed:
+        return parsed
+    try:
+        return week_containing(datetime.strptime(value, "%Y-%m-%d").date())
+    except ValueError as exc:
+        raise ValueError(
+            f"could not read {value!r} as a week; use DD/MM-DD/MM or YYYY-MM-DD"
+        ) from exc
+
+
+def cmd_backfill(args, settings: TrackerSettings) -> int:
+    """Catch the tracker up over a range of past weeks.
+
+    Runs the ordinary weekly pipeline once per week, chronologically -- the
+    tracker appends each week as the next column, so order is not cosmetic.
+    """
+    from .extract import extract_metrics, find_screenshots
+    from .sheets import WeeklyTrackerSheet
+
+    last = _week_arg(args.to, args.year) if args.to else last_complete_week()
+
+    sheet = None
+    if not args.no_sheet:
+        sheet = WeeklyTrackerSheet.open(settings.service_account_json,
+                                        settings.wiki_sheet_id, settings.weekly_tab)
+        problems = sheet.validate()
+        if problems:
+            print("the tab does not have the expected shape: " + "; ".join(problems),
+                  file=sys.stderr)
+            return 1
+
+    if args.from_:
+        first = _week_arg(args.from_, args.year)
+    elif sheet is not None:
+        first = _first_incomplete(sheet, last)
+        if first is None:
+            print("Nothing to backfill -- every week up to "
+                  f"{last.label} is already complete.")
+            return 0
+        print(f"Starting at {first.label} (the first week that is not complete).")
+    else:
+        print("--from is required when --no-sheet is set", file=sys.stderr)
+        return 2
+
+    weeks = weeks_between(first, last)
+    if not weeks:
+        print(f"{first.label} is after {last.label}; nothing to do.", file=sys.stderr)
+        return 2
+
+    print(f"\n{len(weeks)} week(s) to process: {weeks[0].label} .. {weeks[-1].label}")
+    if args.capture:
+        # Each week is a full capture + a vision call per screen. Say so before
+        # spending it, rather than after.
+        print(f"  this will capture ~{len(weeks) * 6} screens and make "
+              f"{len(weeks)} extraction call(s)")
+    if args.dry_run:
+        print("  DRY RUN: nothing will be written\n")
+
+    outcomes: list[WeekOutcome] = []
+    for position, week in enumerate(weeks, 1):
+        print(f"\n[{position}/{len(weeks)}] {week.label}")
+        outcome = WeekOutcome(week=week)
+        outcomes.append(outcome)
+
+        if sheet is not None:
+            filled, total = sheet.completeness(week.label)
+            outcome.filled_before, outcome.total_rows = filled, total
+            if filled >= COMPLETE_ENOUGH and not args.redo:
+                outcome.skipped = True
+                print(f"  already has {filled}/{total} cells -- skipping "
+                      "(use --redo to process it anyway)")
+                continue
+            print(f"  {filled}/{total} cells filled")
+
+        try:
+            metrics = _collect_week(week, args, settings, extract_metrics,
+                                    find_screenshots)
+            outcome.metrics = metrics
+            if sheet is not None:
+                updates, _skipped, column = sheet.plan_write(
+                    week.label, metrics, overwrite=args.overwrite)
+                if args.dry_run:
+                    print(f"  would write {len(updates)} cell(s) to column {column + 1}")
+                else:
+                    sheet.apply(updates, column)
+                    # Re-read so the next week's column lands after this one.
+                    sheet = WeeklyTrackerSheet.open(settings.service_account_json,
+                                                    settings.wiki_sheet_id,
+                                                    settings.weekly_tab)
+                    print(f"  wrote {len(updates)} cell(s) to column {column + 1}")
+                outcome.written = len(updates)
+            _snapshot(settings, week, metrics,
+                      Report(week=week, metrics=metrics, missing=metrics.missing()))
+        except SessionExpired as exc:
+            outcome.error = str(exc)
+            print(f"  {exc}", file=sys.stderr)
+            print("  stopping: every later week would fail the same way",
+                  file=sys.stderr)
+            break
+        except Exception as exc:
+            # One bad week must not cost the other five.
+            outcome.error = str(exc).splitlines()[0][:200]
+            print(f"  FAILED: {outcome.error}", file=sys.stderr)
+
+    report = BackfillReport(
+        outcomes=outcomes,
+        sheet_url=SHEET_URL.format(sheet_id=settings.wiki_sheet_id),
+        dry_run=args.dry_run)
+    print("\n" + report.text())
+    _deliver(report, settings, quiet=args.no_notify)
+    return 1 if report.failed else 0
+
+
+def _first_incomplete(sheet, last: Week) -> Optional[Week]:
+    """The earliest not-yet-complete week at or before `last`.
+
+    Walks back from `last` while weeks are still incomplete, so a gap in the
+    middle is picked up rather than stepped over.
+    """
+    candidate = None
+    week = last
+    for _ in range(52):  # a year is plenty; also stops a runaway loop
+        filled, _total = sheet.completeness(week.label)
+        if filled >= COMPLETE_ENOUGH:
+            break
+        candidate = week
+        week = week.previous()
+    return candidate
+
+
+def _collect_week(week: Week, args, settings, extract_metrics, find_screenshots):
+    """Screenshots -> metrics for one week, capturing them first if asked."""
+    if args.capture:
+        for path in find_screenshots(settings.screenshot_dir):
+            path.unlink()  # a stale image would be read as this week's numbers
+        result = capture_all(week, settings.screenshot_dir, settings.session_file,
+                             plan=load_plan(settings.capture_plan),
+                             headless=settings.capture_headless)
+        for name, why in result.failed:
+            print(f"    could not capture {name}: {why}", file=sys.stderr)
+
+    screenshots = find_screenshots(settings.screenshot_dir)
+    metrics = WeeklyMetrics()
+    if screenshots:
+        print(f"  reading {len(screenshots)} screenshot(s)")
+        metrics = extract_metrics(screenshots, week,
+                                  api_key=settings.anthropic_api_key,
+                                  model=settings.model).to_weekly()
+    else:
+        raise RuntimeError(
+            f"no screenshots for {week.label} -- capture them, or put them in "
+            f"{settings.screenshot_dir} and re-run this week with --from/--to")
+
+    for key, value in _parse_overrides(args.set).items():
+        setattr(metrics, key, value)
+
+    if args.capture and not args.dry_run:
+        _archive(screenshots, settings, week)
+
+    metrics, _discrepancies = derive(metrics)
+    return metrics
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="folqs_tracker",
@@ -462,6 +633,26 @@ def build_parser() -> argparse.ArgumentParser:
     cap.add_argument("--only", help="Comma-separated target keys, e.g. samples,ads")
     cap.add_argument("--headed", action="store_true", help="Show the browser window")
     cap.set_defaults(func=cmd_capture)
+
+    back = sub.add_parser("backfill", help="Catch the tracker up over past weeks")
+    back.add_argument("--from", dest="from_", metavar="WEEK",
+                      help="First week (DD/MM-DD/MM or YYYY-MM-DD). "
+                           "Default: the first week that is not complete.")
+    back.add_argument("--to", metavar="WEEK",
+                      help="Last week (default: the last complete week)")
+    back.add_argument("--year", type=int)
+    back.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE",
+                      help="Applied to EVERY week in the range -- use with care")
+    back.add_argument("--capture", action="store_true",
+                      help="Take each week's screenshots automatically")
+    back.add_argument("--redo", action="store_true",
+                      help="Process weeks that already look complete")
+    back.add_argument("--overwrite", action="store_true",
+                      help="Replace existing cell values instead of keeping them")
+    back.add_argument("--dry-run", action="store_true")
+    back.add_argument("--no-sheet", action="store_true")
+    back.add_argument("--no-notify", action="store_true")
+    back.set_defaults(func=cmd_backfill)
 
     check = sub.add_parser("check", help="Validate config, credentials and tab layout")
     check.set_defaults(func=cmd_check)
