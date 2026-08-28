@@ -401,6 +401,92 @@ def cmd_resolve(args, settings: Settings) -> int:
     return 0
 
 
+def cmd_names(args, settings: Settings) -> int:
+    """Verify display names from the sourcing sheet against real profiles."""
+    import csv as _csv
+
+    from openpyxl import load_workbook
+
+    from .handles import normalize, resolve_name
+    from .models import Creator
+    from .providers.http_ssr import HttpSSRProvider
+
+    workbook = load_workbook(args.sheet, data_only=True)
+    worksheet = workbook[args.sheet_tab]
+    rows = list(worksheet.iter_rows(values_only=True))
+    header = rows[0]
+    column = header.index(args.name_column)
+    names, seen = [], set()
+    for row in rows[1:]:
+        name = row[column] if row else None
+        if name and normalize(name) not in seen:
+            seen.add(normalize(name))
+            names.append(name)
+
+    known = {}
+    for record in store.read(args.creator_store):
+        try:
+            creator = Creator(**record)
+        except Exception:
+            continue
+        known[creator.handle.lower()] = creator
+
+    out = Path(args.out)
+    done: dict[str, dict] = {}
+    if out.exists():
+        with out.open(encoding="utf-8-sig") as fh:
+            for row in _csv.DictReader(fh):
+                done[normalize(row.get("name"))] = row
+
+    todo = [n for n in names if normalize(n) not in done]
+    print(f"{len(names)} unique names, {len(done)} already resolved, {len(todo)} to check")
+    if args.max_items:
+        todo = todo[: args.max_items]
+
+    provider = HttpSSRProvider(delay_seconds=settings.request_delay_seconds)
+    confirmed = 0
+    try:
+        for i, name in enumerate(todo, 1):
+            try:
+                result = resolve_name(name, provider, known_creators=known)
+            except BlockedError as exc:
+                print(f"  BLOCKED: {exc}", file=sys.stderr)
+                break
+            done[normalize(name)] = {
+                "name": name, "handle": result.handle,
+                "profile_url": result.profile_url,
+                "confidence": result.confidence,
+                "followers": result.followers if result.followers is not None else "",
+                "evidence": result.evidence,
+            }
+            if result.confidence.startswith("confirmed"):
+                confirmed += 1
+            print(f"  [{i}/{len(todo)}] {name!r:38} -> "
+                  f"{('@' + result.handle) if result.handle else '—':24} "
+                  f"{result.confidence}", flush=True)
+            if i % 10 == 0:
+                _write_names(out, done)
+    finally:
+        provider.close()
+
+    _write_names(out, done)
+    print(f"\n{confirmed} newly confirmed; {len(done)} names on file -> {out}")
+    return 0
+
+
+def _write_names(path: Path, done: dict[str, dict]) -> None:
+    import csv as _csv
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = ["name", "handle", "profile_url", "confidence", "followers", "evidence"]
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as fh:
+        writer = _csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader()
+        for row in done.values():
+            writer.writerow({k: row.get(k, "") for k in fields})
+    tmp.replace(path)
+
+
 def cmd_catalogue(args, settings: Settings) -> int:
     """Stage 1b: add each known creator's other recent posts to the URL list.
 
@@ -602,6 +688,19 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("--max-items", type=int, help="Stop after N this run")
     common(resolve)
     resolve.set_defaults(func=cmd_resolve)
+
+    names = sub.add_parser(
+        "names",
+        help="Verify sourcing-sheet display names against real profiles",
+    )
+    names.add_argument("--sheet", default="data/input/colostrum_sourcing.xlsx")
+    names.add_argument("--sheet-tab", default="Creator Videos")
+    names.add_argument("--name-column", default="Creator label from recording")
+    names.add_argument("--creator-store", default="data/output/creators.jsonl")
+    names.add_argument("--out", default="data/output/name_resolution.csv")
+    names.add_argument("--max-items", type=int, help="Stop after N this run")
+    common(names)
+    names.set_defaults(func=cmd_names)
 
     catalogue = sub.add_parser(
         "catalogue",
