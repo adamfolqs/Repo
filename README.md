@@ -254,3 +254,14 @@ Notes:
   low result count diagnosable without re-scraping.
 - Short share links (`tiktok.com/t/...`) are resolved automatically. Note they
   embed the sharing account's id — avoid pasting them anywhere public.
+
+## Where the output lives
+
+- `data/output/colostrum_creator_list.xlsx` — the deliverable, five tabs
+- `data/output/tabs/*.csv` — the same tabs as CSV
+- `data/output/tabs/drive/*.csv` — narrower copies, as uploaded to Drive
+- `data/output/videos.jsonl` / `creators.jsonl` — the raw resumable stores
+- `data/output/name_resolution.csv` — every sourcing-sheet name and its verdict
+
+A Google Drive folder mirrors the main tabs as native Sheets:
+**Colostrum Creator Sourcing — TikTok Scrape (Aug 2026)**.
