@@ -110,6 +110,12 @@ COMPETITOR_BRANDS = {
     "Physician's Choice": ["physician's choice", "physicians choice", "physicianschoice"],
     "Wellah": ["wellah"],
     "Magic Milk": ["magic milk"],
+    # Not in the original sourcing sheet -- found while searching, and all
+    # heavily promoted on TikTok Shop. Worth tracking as competitors.
+    "WonderCow": ["wondercow", "wonder cow"],
+    "Cowabunga": ["cowabunga"],
+    "Cowboy Colostrum": ["cowboy colostrum"],
+    "Rhea Essentials": ["rhea essentials"],
 }
 
 # Words that mean "this video is selling something", in both languages.
@@ -124,12 +130,35 @@ _COLOSTRUM_TERMS = ["colostrum", "calostro", "colostro", "bovine colostrum"]
 
 
 def match_brand(*texts: str | None) -> str:
-    """Which competitor brand this video is about, '' if none named."""
+    """Which competitor brand this video is mainly about, '' if none named.
+
+    Scored rather than first-match-wins. Captions routinely name several
+    brands -- a WonderCow video tagged #tryarmra is a WonderCow video -- so
+    picking the first alias found in dict order gets it wrong. An @mention or
+    a brand named in the prose outranks a brand that only appears inside a
+    hashtag, and ties break on how often the brand is named.
+    """
     blob = " ".join(t.lower() for t in texts if t)
+    if not blob:
+        return ""
+
+    best, best_score = "", 0
     for brand, aliases in COMPETITOR_BRANDS.items():
-        if any(alias in blob for alias in aliases):
-            return brand
-    return ""
+        score = 0
+        for alias in aliases:
+            if alias not in blob:
+                continue
+            occurrences = blob.count(alias)
+            score += occurrences
+            if f"@{alias}" in blob or f"@ {alias}" in blob:
+                score += 10           # explicit brand mention: strongest signal
+            # A standalone word beats an alias buried inside another token
+            # ("armra" inside "tryarmra").
+            if re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", blob):
+                score += 3
+        if score > best_score:
+            best, best_score = brand, score
+    return best
 
 
 def is_colostrum(*texts: str | None) -> bool:

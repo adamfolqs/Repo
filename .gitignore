@@ -14,4 +14,7 @@ token.json
 # Scraped output is data, not source
 data/output/*
 !data/output/.gitkeep
+!data/output/handle_lookup.csv
+!data/output/found_videos.csv
+!data/output/colostrum_creator_list.xlsx
 .cache/

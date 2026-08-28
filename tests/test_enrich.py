@@ -43,7 +43,23 @@ def test_colostrum_filter():
     assert not is_colostrum("my protein shake routine")
     print("  colostrum topic filter OK (EN + ES)")
 
+
+
+def test_brand_disambiguation():
+    """A caption naming several brands must resolve to the right one."""
+    from tiktok_scraper.enrich import match_brand
+    # Real caption: WonderCow video that also carries #tryarmra
+    assert match_brand("Anyone else taking this!? Loving it so far! @WonderCow "
+                       "Colostrum #colostrum #colostrumbenefits #tryarmra") == "WonderCow"
+    # ARMRA genuinely the subject
+    assert match_brand("my honest first impressions of armra colostrum!!! "
+                       "#colostrum #tryarmra #armracolostrum") == "ARMRA"
+    # Substring must not fire on its own
+    assert match_brand("#tryarmra") == "ARMRA", "hashtag-only still counts, just weaker"
+    assert match_brand("no brands here at all") == ""
+    print("  brand disambiguation OK (@mention and word-boundary scoring)")
+
 if __name__ == "__main__":
-    for fn in [test_language, test_email, test_brand_and_product, test_colostrum_filter]:
+    for fn in [test_language, test_email, test_brand_and_product, test_colostrum_filter, test_brand_disambiguation]:
         print(fn.__name__ + ":"); fn()
     print("\nALL ENRICH TESTS PASSED")
