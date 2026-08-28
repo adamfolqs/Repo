@@ -70,7 +70,18 @@ def test_brand_accounts():
     for handle in ["sarahtriedwondercow", "jenlaurenn", "whatmojoloves",
                    "leahdajud", "creakzshop", "nicollefigueroaa"]:
         assert not is_brand_account(handle), handle
-    print("  brand-owned account flagging OK")
+
+    # The display name is often the only tell: Bloom Nutrition posts as
+    # '@bloom', whose handle gives away nothing at all.
+    assert is_brand_account("bloom", "Bloom Nutrition")
+    assert is_brand_account("enjoywondercow", "WonderCow Colostrum 🐮✨")
+    assert is_brand_account("wondercowusa", None)
+
+    # ...but a creator whose display name merely mentions a brand is a
+    # creator. Flagging them would drop a real outreach target.
+    assert not is_brand_account("sarahtries", "Sarah tries Bloom Nutrition")
+    assert not is_brand_account("gutgirl", "Kayla | ARMRA obsessed")
+    print("  brand-owned account flagging OK (handle and display name)")
 
 
 def test_skeptical():

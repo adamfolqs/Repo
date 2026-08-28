@@ -174,38 +174,72 @@ _KNOWN_BRAND_ACCOUNTS = {
     "armra", "drinkarmra", "bloomnutrition", "cymbiotika", "lemme", "nutricost",
     "microingredients", "physicianschoice", "wellah", "cowboycolostrum",
     "cowabungacolostrum", "rheaessentials", "magicmilk",
+    # Observed in this scrape; the handle misspells the product word, so the
+    # alias matching below cannot reach it.
+    "cowabungacolustrum",
 }
+
+
+def _compact(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+
+
+# Words a brand wraps around its own name when the bare one is taken, and
+# words it appends. '@enjoywondercow' and '@wondercowusa' are both WonderCow.
+_BRAND_AFFIXES = (
+    "try", "enjoy", "drink", "get", "shop", "the", "my", "buy", "use", "go",
+    "official", "usa", "us", "uk", "co", "inc", "hq", "brand", "store",
+    "colostrum", "nutrition", "supplements", "health", "wellness",
+)
+
+
+def _is_brand_name(value: str | None) -> bool:
+    """Whether a handle or display name essentially *is* a competitor's name."""
+    normalized = _compact(value)
+    if not normalized:
+        return False
+    for aliases in COMPETITOR_BRANDS.values():
+        for alias in aliases:
+            compact = _compact(alias)
+            if len(compact) < 5 or compact not in normalized:
+                continue
+            # Strip the brand out; whatever is left must be nothing but the
+            # affixes a brand puts around its own name. That keeps
+            # '@enjoywondercow' and 'Bloom Nutrition' while still rejecting
+            # '@sarahtriedwondercow', whose remainder is a person's name.
+            remainder = normalized.replace(compact, "", 1)
+            while remainder:
+                for affix in sorted(_BRAND_AFFIXES, key=len, reverse=True):
+                    if remainder.startswith(affix):
+                        remainder = remainder[len(affix):]
+                        break
+                    if remainder.endswith(affix):
+                        remainder = remainder[: -len(affix)]
+                        break
+                else:
+                    break
+            if len(remainder) <= 2:
+                return True
+    return False
 
 
 def is_brand_account(handle: str | None, nickname: str | None = None) -> bool:
     """Whether an account looks like the brand's own, not a creator's.
 
-    Checked against a known list first, then against the competitor aliases --
-    a handle that *is* a brand name ('@wondercowusa') is the brand; one that
-    merely mentions colostrum is not. Deliberately narrow: mislabelling a real
-    creator as brand-owned drops them from outreach entirely.
+    Checks the known list, then the handle, then the *display name* -- which
+    matters more than it looks: Bloom Nutrition posts as '@bloom', and the
+    handle alone gives nothing away, while the display name says exactly what
+    it is.
+
+    Deliberately narrow in the other direction: mislabelling a real creator as
+    brand-owned drops them from outreach entirely, so the brand name has to be
+    essentially the whole identifier rather than merely present in it.
     """
-    if not handle:
+    if not handle and not nickname:
         return False
-    normalized = handle.lstrip("@").lower().replace("_", "").replace(".", "")
-    if normalized in {h.replace("_", "").replace(".", "") for h in _KNOWN_BRAND_ACCOUNTS}:
+    if _compact(handle) in {_compact(h) for h in _KNOWN_BRAND_ACCOUNTS}:
         return True
-    for aliases in COMPETITOR_BRANDS.values():
-        for alias in aliases:
-            compact = alias.replace(" ", "").replace("'", "")
-            if len(compact) < 5:
-                continue
-            # The brand name must be essentially the whole handle: 'wondercowusa'
-            # is the brand, 'sarahtriedwondercow' is a creator reviewing it.
-            if normalized == compact or (
-                normalized.startswith(compact)
-                and len(normalized) - len(compact) <= 4
-            ) or (
-                normalized.endswith(compact)
-                and len(normalized) - len(compact) <= 3
-            ):
-                return True
-    return False
+    return _is_brand_name(handle) or _is_brand_name(nickname)
 
 
 # Negative / debunking videos are kept deliberately: they are the objection
