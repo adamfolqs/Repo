@@ -438,8 +438,25 @@ def cmd_names(args, settings: Settings) -> int:
             for row in _csv.DictReader(fh):
                 done[normalize(row.get("name"))] = row
 
-    todo = [n for n in names if normalize(n) not in done]
-    print(f"{len(names)} unique names, {len(done)} already resolved, {len(todo)} to check")
+    # Handles suggested from outside (a web search, a colleague). These are
+    # only ever *checked* -- they go through the same profile verification as
+    # a generated candidate, so an incorrect suggestion is rejected rather
+    # than trusted.
+    suggested: dict[str, list[str]] = {}
+    if args.candidates_file and Path(args.candidates_file).exists():
+        with open(args.candidates_file, encoding="utf-8-sig") as fh:
+            for row in _csv.DictReader(fh):
+                key = normalize(row.get("name"))
+                handle = (row.get("candidate_handle") or "").strip().lstrip("@")
+                if key and handle:
+                    suggested.setdefault(key, []).append(handle)
+
+    recheck = {normalize(n) for n in names if normalize(n) in suggested
+               and not (done.get(normalize(n), {}).get("confidence", "")
+                        .startswith("confirmed"))}
+    todo = [n for n in names if normalize(n) not in done or normalize(n) in recheck]
+    print(f"{len(names)} unique names, {len(done)} already resolved, {len(todo)} to check"
+          + (f" ({len(recheck)} rechecked with suggested handles)" if recheck else ""))
     if args.max_items:
         todo = todo[: args.max_items]
 
@@ -448,7 +465,10 @@ def cmd_names(args, settings: Settings) -> int:
     try:
         for i, name in enumerate(todo, 1):
             try:
-                result = resolve_name(name, provider, known_creators=known)
+                result = resolve_name(
+                    name, provider, known_creators=known,
+                    extra_candidates=suggested.get(normalize(name), []),
+                )
             except BlockedError as exc:
                 print(f"  BLOCKED: {exc}", file=sys.stderr)
                 break
@@ -698,6 +718,10 @@ def build_parser() -> argparse.ArgumentParser:
     names.add_argument("--name-column", default="Creator label from recording")
     names.add_argument("--creator-store", default="data/output/creators.jsonl")
     names.add_argument("--out", default="data/output/name_resolution.csv")
+    names.add_argument("--candidates-file",
+                       default="data/input/handle_candidates.csv",
+                       help="CSV of name,candidate_handle to also check "
+                            "(suggestions are verified, never trusted)")
     names.add_argument("--max-items", type=int, help="Stop after N this run")
     common(names)
     names.set_defaults(func=cmd_names)

@@ -9,3 +9,6 @@
   [200/327] 200 ok, 0 failed
   [225/327] 225 ok, 0 failed
   [243] @plantedwithkatie: no profile data for @plantedwithkatie — private, banned, or renamed
+  [250/327] 249 ok, 1 failed
+  [275] @sydney.shops: request failed: Server disconnected without sending a response.
+  [275/327] 273 ok, 2 failed
