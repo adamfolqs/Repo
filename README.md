@@ -156,14 +156,40 @@ python -m tiktok_scraper discover --keyword-file data/input/discover_keywords.tx
 python -m tiktok_scraper catalogue
 
 # 3. video URLs -> full rows with real numbers (plain HTTP, no browser)
-python -m tiktok_scraper resolve
+#    --priority-handles fetches creators already known to post about colostrum
+#    first, which is what you want whenever there are more URLs than time
+python -m tiktok_scraper resolve --priority-handles
 
 # 4. handles -> follower count + bio email
 python -m tiktok_scraper profiles
 
-# 5. assemble the workbook
+# 5. display names from the sourcing sheet -> verified handles
+python -m tiktok_scraper names
+
+# 6. assemble the workbook
 python build_sheet.py
 ```
+
+`discover` and `catalogue` both append to the same URL list and can run at the
+same time; the list merges on write rather than overwriting.
+
+### Handles are verified, never derived
+
+`names` exists because display names cannot be turned into handles by
+transformation — they are not unique, and a handle often looks nothing like the
+name it shows (`Creakzzz` is `@creakzshop`; `@creakzzz` is somebody else). So it
+proposes candidates, opens each profile, and keeps one only if the account that
+loaded says it is that person.
+
+The recording shows **display names**, so a display-name match is the
+confirmation. A label that merely spells a real handle is recorded but marked
+`unconfirmed`. Labels too generic to identify one account (`jacquie`,
+`Unreadable creator`) are reported as unresolvable rather than resolved to
+whichever account happens to answer. Externally suggested handles — from a web
+search — go through the same check, so a wrong suggestion is rejected rather
+than trusted.
+
+Result on the 177-row sheet: 20 handles before, 125 after.
 
 Each stage appends to a JSONL store and skips ids already in it, so a stage
 that dies partway **resumes rather than restarts**. The full sweep takes hours
