@@ -18,3 +18,13 @@ data/output/*
 !data/output/found_videos.csv
 !data/output/colostrum_creator_list.xlsx
 .cache/
+
+# Weekly tracker working files.
+# Screenshots are dashboard captures and may carry customer/creator detail;
+# logs and archives are noise. Snapshots ARE kept -- they are the numeric
+# history, small, and worth diffing.
+data/tracking/inbox/*
+!data/tracking/inbox/.gitkeep
+!data/tracking/inbox/README.md
+data/tracking/archive/
+data/tracking/logs/

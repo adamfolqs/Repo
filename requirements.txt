@@ -13,3 +13,6 @@ google-auth>=2.30
 
 # Free/local scraping backend (optional — only for --provider playwright)
 playwright>=1.45
+
+# Weekly performance tracker (python -m folqs_tracker)
+anthropic>=0.40         # reads analytics screenshots into typed metrics

@@ -146,3 +146,111 @@ Notes:
   low result count diagnosable without re-scraping.
 - Short share links (`tiktok.com/t/...`) are resolved automatically. Note they
   embed the sharing account's id — avoid pasting them anywhere public.
+
+---
+
+# Weekly performance tracker
+
+An automated, scheduled bot for the weekly TikTok Shop review. It replaces the
+manual loop — count the samples, screenshot the dashboards, paste them into
+Claude, retype the numbers into the wiki — with one Friday job.
+
+```
+screenshots ─► Claude (vision) ─┐
+sample tracker ─► samples sent ─┼─► derive + cross-check ─► Weekly Performance tab
+manual --set values ────────────┘                        └─► email digest + Telegram
+```
+
+## What it writes into
+
+The **Folqs TikTok Shop Wiki**, tab **`Weekly Performance (1)`**. That tab is
+*transposed* — metrics are rows and each week is a new **column** — so the job
+appends a column, it does not append a row. Week labels are `DD/MM–DD/MM` with
+an **en dash**, Friday to Thursday, matching every column already there.
+
+Six rows are computed rather than read, using formulas checked against the
+tracker's own May–July history: `AOV = GMV/Orders`, `CTR = Clicks/Impressions`,
+`CTOR = Orders/Clicks`, `GMV Per Video = Affiliate GMV/Videos Posted`,
+`Cost Per Order = Cost/Ad Orders`, `Sample COGS = Samples × $15`.
+
+If a screenshot *also* shows one of those, both are kept and any disagreement is
+flagged — that is how a misread digit gets caught before it reaches the sheet.
+
+## Setup
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env          # fill in the tracker section
+```
+
+Three credentials are needed:
+
+1. **`ANTHROPIC_API_KEY`** — reads the screenshots.
+2. **`service_account.json`** — a Google service account. **Share the wiki and
+   the sample tracker with its `client_email` as an Editor**; without that you
+   get a 403.
+3. **SMTP + Telegram** — see the comments in `.env.example`. Gmail needs an App
+   Password, and a Telegram bot cannot message you until you message it first.
+
+Then confirm everything the scheduled job depends on:
+
+```bash
+python -m folqs_tracker check      # credentials, tab layout, which column it would write
+python -m folqs_tracker notify-test # proves the email and Telegram actually arrive
+```
+
+## Weekly use
+
+Drop the week's analytics screenshots in `data/tracking/inbox/` (that folder's
+README lists which screens to capture), then:
+
+```bash
+python -m folqs_tracker run --dry-run --print-report   # read + report, write nothing
+python -m folqs_tracker run                            # the real thing
+python -m folqs_tracker run --set retainer_payments=2050
+```
+
+Useful flags: `--week 21/08-27/08` or `--week-ending 2026-08-27` to redo an
+earlier week, `--samples-sent 26` to override the counted figure, `--overwrite`
+to replace existing cells, `--no-notify` to stay quiet.
+
+## Scheduling
+
+```bash
+./scripts/install_schedule.sh              # Fridays 09:00
+./scripts/install_schedule.sh --at 17:30
+./scripts/install_schedule.sh --status
+./scripts/install_schedule.sh --uninstall
+```
+
+macOS gets a **launchd** agent, Linux a **cron** entry. launchd is the better
+of the two here: it runs a job it missed while the Mac was asleep, whereas cron
+silently skips it. Every run logs to `data/tracking/logs/`.
+
+Weeks close Thursday night, so the job runs Friday morning. If the inbox is
+empty when it fires, the digest says so plainly and tells you to drop the
+screenshots and re-run — it does not quietly report a week of blanks.
+
+## Design rules
+
+- **Never invent a number.** Anything unreadable comes back `null`, stays an
+  empty cell, and is listed in the digest. A plausible guess is indistinguishable
+  from a reading once it is in the sheet, and these numbers drive spend.
+- **Empty, never zero.** A `0` would drag down every average computed over the row.
+- **A re-run never clobbers a manual edit.** If a cell already holds a different
+  value the job keeps it and reports the conflict; `--overwrite` opts out.
+- **Screenshots are archived once read**, so next week's unattended run cannot
+  re-read them and report stale numbers as current.
+- **Numbers are snapshotted to disk before anything remote is touched**, so a
+  failed sheet write or a bounced email never costs the extraction.
+
+## Tests
+
+```bash
+python tests/test_tracker.py
+```
+
+13 tests, no network. Covers the week math against the tracker's real labels,
+every derived formula against real July figures, section scoping (`Orders`
+exists under both `OVERALL METRICS` and `GMV MAX`), new-column writes,
+idempotent re-runs, sample counting, and digest rendering.
