@@ -326,6 +326,8 @@ def _read_url_rows(path) -> list[tuple[str, str]]:
     malformed line can never be re-fetched as if it were a video.
     """
     rows = []
+    if not Path(path).exists():
+        return rows
     for line in _read_lines(str(path)):
         parts = [p.strip() for p in line.split(",")]
         if len(parts) >= 2 and parts[1].isdigit() and len(parts[1]) >= 15:
@@ -334,10 +336,27 @@ def _read_url_rows(path) -> list[tuple[str, str]]:
 
 
 def _write_urls(path: Path, known: dict[str, str]) -> None:
+    """Write the URL list, merging with whatever is already on disk.
+
+    `discover` and `catalogue` both append to this file and are usefully run at
+    the same time. Each holds its own view loaded at startup, so a plain
+    overwrite means the last writer silently drops everything the other found
+    (measured: 3291 URLs collapsing back to 2894). Re-reading before each write
+    makes concurrent stages additive.
+
+    The write goes via a temporary file and an atomic rename, so a reader that
+    runs mid-write sees the old file rather than a truncated one.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    merged = {video_id: handle for handle, video_id in _read_url_rows(path)}
+    merged.update(known)
+    known.update(merged)
+
     rows = ["handle,video_id"]
-    rows += [f"{handle},{video_id}" for video_id, handle in known.items()]
-    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    rows += [f"{handle},{video_id}" for video_id, handle in merged.items()]
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 def cmd_resolve(args, settings: Settings) -> int:
