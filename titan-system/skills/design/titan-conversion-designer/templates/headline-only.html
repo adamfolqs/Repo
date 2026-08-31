@@ -1,0 +1,70 @@
+<!--
+  Template: Headline Only
+  Use for: Product Hero, Problem-State, Lifestyle patterns with single headline
+  Variables: Replace {{BACKGROUND_IMAGE}}, {{HEADLINE}}, {{BRAND_LOGO_URL}}, {{FONT_COLOR}}, {{BG_OVERLAY_OPACITY}}
+  Screenshot: npx puppeteer screenshot headline-only.html --width=1080 --height=1350
+-->
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700;900&display=swap');
+
+  .container {
+    position: relative;
+    width: 1080px;
+    height: 1350px;
+    overflow: hidden;
+  }
+
+  .bg-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(
+      to bottom,
+      rgba(0,0,0,{{BG_OVERLAY_OPACITY}}) 0%,
+      rgba(0,0,0,0) 40%,
+      rgba(0,0,0,0) 60%,
+      rgba(0,0,0,{{BG_OVERLAY_OPACITY}}) 100%
+    );
+  }
+
+  .headline {
+    position: absolute;
+    top: 60px;
+    left: 50px;
+    right: 50px;
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 900;
+    font-size: 64px;
+    line-height: 1.1;
+    color: {{FONT_COLOR}};
+    text-shadow: 0 2px 12px rgba(0,0,0,0.4);
+    text-transform: uppercase;
+  }
+
+  .brand-logo {
+    position: absolute;
+    bottom: 40px;
+    right: 40px;
+    height: 48px;
+    opacity: 0.9;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <img class="bg-image" src="{{BACKGROUND_IMAGE}}" alt="">
+    <div class="overlay"></div>
+    <div class="headline">{{HEADLINE}}</div>
+    <img class="brand-logo" src="{{BRAND_LOGO_URL}}" alt="">
+  </div>
+</body>
+</html>

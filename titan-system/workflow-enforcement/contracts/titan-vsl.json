@@ -1,0 +1,25 @@
+{
+  "plugin": "titan",
+  "mode": "vsl",
+  "description": "Titan VSL — intake → script → scene breakdown",
+  "phases": [
+    {
+      "name": "intake",
+      "required_artifact_glob": "*intake*.md",
+      "min_bytes": 1000,
+      "description": "Avatar, awareness, sophistication, belief chain (6 necessary beliefs), big idea, mechanism, proof, offer"
+    },
+    {
+      "name": "script",
+      "required_artifact_glob": "*script*.md",
+      "min_bytes": 8000,
+      "description": "Full VSL script — hook, story, mechanism, proof, offer, close"
+    },
+    {
+      "name": "scene-breakdown",
+      "required_artifact_glob": "*scene*.md",
+      "min_bytes": 2000,
+      "description": "Scene-by-scene visual playbook with frame timing and shot direction"
+    }
+  ]
+}

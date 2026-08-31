@@ -1,0 +1,19 @@
+{
+  "plugin": "titan",
+  "mode": "email",
+  "description": "Titan email sequence — intake → full sequence",
+  "phases": [
+    {
+      "name": "intake",
+      "required_artifact_glob": "*intake*.md",
+      "min_bytes": 800,
+      "description": "Avatar, awareness stage, sequence type (welcome/abandoned/post-purchase), goal, sequence length"
+    },
+    {
+      "name": "sequence",
+      "required_artifact_glob": "*sequence*.md",
+      "min_bytes": 3000,
+      "description": "Full sequence with subject lines, body copy, CTAs per email"
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+<!--
+  Template: Product + Review Quote
+  Use for: Pattern 24 (Product + Review Quote), testimonial-style ads
+  Variables: {{PRODUCT_IMAGE}}, {{STAR_COLOR}}, {{STAR_COUNT}}, {{REVIEW_TEXT}},
+             {{REVIEWER_NAME}}, {{OFFER_TEXT}}, {{OFFER_BG_COLOR}}, {{CTA_TEXT}},
+             {{CTA_BG_COLOR}}, {{BG_COLOR}}, {{TEXT_COLOR}}
+  Screenshot: npx puppeteer screenshot review-quote.html --width=1080 --height=1080
+-->
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;900&display=swap');
+
+  .container {
+    position: relative;
+    width: 1080px;
+    height: 1080px;
+    background: {{BG_COLOR}};
+    padding: 60px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .stars {
+    font-size: 36px;
+    color: {{STAR_COLOR}};
+    margin-bottom: 24px;
+    letter-spacing: 4px;
+  }
+
+  .review-text {
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 400;
+    font-size: 28px;
+    line-height: 1.5;
+    color: {{TEXT_COLOR}};
+    margin-bottom: 16px;
+    flex-grow: 1;
+  }
+
+  .reviewer-name {
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 600;
+    font-size: 22px;
+    color: {{TEXT_COLOR}};
+    opacity: 0.8;
+    margin-bottom: 40px;
+  }
+
+  .bottom-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+
+  .product-image {
+    height: 280px;
+    object-fit: contain;
+  }
+
+  .offer-cta {
+    text-align: center;
+  }
+
+  .offer-badge {
+    background: {{OFFER_BG_COLOR}};
+    color: white;
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 900;
+    font-size: 22px;
+    padding: 12px 24px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    text-transform: uppercase;
+  }
+
+  .cta-button {
+    background: {{CTA_BG_COLOR}};
+    color: white;
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 700;
+    font-size: 20px;
+    padding: 16px 40px;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="stars">★★★★★</div>
+    <div class="review-text">"{{REVIEW_TEXT}}"</div>
+    <div class="reviewer-name">— {{REVIEWER_NAME}}</div>
+    <div class="bottom-row">
+      <img class="product-image" src="{{PRODUCT_IMAGE}}" alt="">
+      <div class="offer-cta">
+        <div class="offer-badge">{{OFFER_TEXT}}</div>
+        <div class="cta-button">{{CTA_TEXT}}</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

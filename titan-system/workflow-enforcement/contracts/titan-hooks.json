@@ -1,0 +1,13 @@
+{
+  "plugin": "titan",
+  "mode": "hooks",
+  "description": "Titan hooks — intake → hooks list (single-phase output)",
+  "phases": [
+    {
+      "name": "hooks",
+      "required_artifact_glob": "*hooks*.md",
+      "min_bytes": 1500,
+      "description": "10+ scroll-stopping hooks across pattern interrupt, curiosity, proof, and contrarian angles"
+    }
+  ]
+}

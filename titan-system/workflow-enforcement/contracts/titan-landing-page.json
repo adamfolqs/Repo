@@ -1,0 +1,19 @@
+{
+  "plugin": "titan",
+  "mode": "landing-page",
+  "description": "Titan landing page copy — intake → full long-form copy",
+  "phases": [
+    {
+      "name": "intake",
+      "required_artifact_glob": "*intake*.md",
+      "min_bytes": 1000,
+      "description": "Avatar, awareness, sophistication, big idea, mechanism, proof, offer, guarantee"
+    },
+    {
+      "name": "copy",
+      "required_artifact_glob": "*copy*.md",
+      "min_bytes": 4000,
+      "description": "Full landing-page copy — hero, problem, mechanism, proof, offer stack, FAQ, close"
+    }
+  ]
+}

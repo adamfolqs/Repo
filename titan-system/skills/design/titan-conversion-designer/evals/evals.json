@@ -1,0 +1,73 @@
+{
+  "skill_name": "titan-conversion-designer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I need to create a Facebook ad image for Folqs colostrum. We're targeting gut health problem-aware women 35-55 who've tried probiotics before and nothing worked. What should the ad look like?",
+      "expected_output": "A structured Design Brief with: visual pattern selected from the library, layout with visual hierarchy, color palette with psychological rationale, face/person decision with emotional state, product placement, CTA button spec, reference image filenames, and a complete Gemini prompt ready to execute.",
+      "files": [],
+      "assertions": [
+        {
+          "text": "Response includes a labeled Design Brief with distinct sections (Layout, Color, Face/Person, Product Placement, CTA)",
+          "description": "Checks for structured output format — not just prose suggestions"
+        },
+        {
+          "text": "Response explicitly assigns an awareness level (L1-L5) and ties at least one design decision to it",
+          "description": "Framework vocabulary must appear — proves the skill is guiding the response"
+        },
+        {
+          "text": "Each major design decision (color, layout, face) includes a psychological rationale — not just what, but why",
+          "description": "Design decisions must be traceable to a reason, not arbitrary"
+        },
+        {
+          "text": "Response includes a Gemini-executable prompt or states it is Gemini-ready",
+          "description": "Production deliverable — the output must be actionable, not just advisory"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "We have copy for a new ad. Awareness level L2, shame hook, social proof as the dominant bias. It's for a men's hair loss supplement targeting guys 30-50 who are just starting to notice thinning. What visual pattern should I use and why?",
+      "expected_output": "Pattern recommendation mapped to L2 awareness + shame hook + social proof bias. Should include: specific pattern name, design rationale tied to the copy signal, color recommendation, face/before-after decision, and why this pattern beats alternatives.",
+      "files": [],
+      "assertions": [
+        {
+          "text": "Response maps L2 awareness level to a specific visual approach (problem-state visualization, not product hero)",
+          "description": "Core framework mapping — L2 should never result in a product-forward ad"
+        },
+        {
+          "text": "Response addresses how the shame hook translates to visual choices (face emotional state, minimal copy, problem-state imagery)",
+          "description": "Shame hook must influence the design direction explicitly"
+        },
+        {
+          "text": "Response explains how social proof bias appears visually (faces + numbers, before/after, NOT clinical/logo-based)",
+          "description": "Bias-to-visual mapping must be specific and correct"
+        },
+        {
+          "text": "Response explains why at least one alternative pattern FAILS for this combination",
+          "description": "Anti-pattern reasoning demonstrates deep framework understanding vs. generic advice"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Analyze this — ColonBroom runs a dark mode premium ad (dark navy background, clean product shot, minimal text). It's been running 61+ days. What design psychology makes this work and when should we use this approach?",
+      "expected_output": "Design psychology analysis citing specific principles, correct awareness level fit (L4-L5), clear 'when NOT to use' with specific scenarios (TOF cold, L2 problem-aware, sub-$20 price points).",
+      "files": [],
+      "assertions": [
+        {
+          "text": "Response cites at least 2 named psychological principles (e.g., pattern interrupt, visual cortex processing, premium positioning, fluency heuristic, Z-pattern)",
+          "description": "Analysis must be grounded in specific principles, not vague impressions"
+        },
+        {
+          "text": "Response identifies this as appropriate for L4-L5 audience awareness — NOT for cold TOF traffic",
+          "description": "Correct Titan framework placement — this is a closing/retargeting pattern"
+        },
+        {
+          "text": "Response includes a 'when NOT to use' section with specific contra-indicators",
+          "description": "Directional guidance is only useful if it also tells you when to avoid it"
+        }
+      ]
+    }
+  ]
+}

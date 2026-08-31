@@ -1,0 +1,19 @@
+{
+  "plugin": "titan",
+  "mode": "advertorial",
+  "description": "Titan advertorial — intake → full advertorial",
+  "phases": [
+    {
+      "name": "intake",
+      "required_artifact_glob": "*intake*.md",
+      "min_bytes": 800,
+      "description": "Avatar, awareness, sophistication, story angle, publisher voice, mechanism, proof, target product"
+    },
+    {
+      "name": "copy",
+      "required_artifact_glob": "*advertorial*.md",
+      "min_bytes": 4000,
+      "description": "Full advertorial — story hook, problem, discovery, proof, recommendation, soft CTA"
+    }
+  ]
+}

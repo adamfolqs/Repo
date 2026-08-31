@@ -1,0 +1,19 @@
+{
+  "plugin": "titan",
+  "mode": "fb-ad",
+  "description": "Titan Facebook ad copy — intake + ad variations",
+  "phases": [
+    {
+      "name": "intake",
+      "required_artifact_glob": "*intake*.md",
+      "min_bytes": 800,
+      "description": "Avatar, awareness stage, sophistication, primary belief, big idea, mechanism, proof, offer"
+    },
+    {
+      "name": "copy",
+      "required_artifact_glob": "*ad*.md",
+      "min_bytes": 1200,
+      "description": "3+ ad variations with hooks, body, CTA, image direction"
+    }
+  ]
+}
