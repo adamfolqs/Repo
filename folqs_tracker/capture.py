@@ -469,3 +469,66 @@ def calibrate(session_file: Path, plan_path: Path = PLAN_FILE) -> Path:
     print("Any screen needing clicks (the samples filter) still needs its "
           "`actions` filled in by hand -- see the comments in that file.")
     return saved
+
+
+def import_calibration(raw: dict, plan_path: Path = PLAN_FILE) -> tuple[Path, list[str]]:
+    """Turn the Chrome-session reconnaissance JSON into a capture plan.
+
+    The browser session can visit the screens but cannot write this repo's
+    files, so it reports what it saw and this folds it in. Returns
+    (path, warnings) -- warnings are the screens that still need a human.
+    """
+    reported = {t.get("key"): t for t in raw.get("targets", []) if t.get("key")}
+    warnings: list[str] = []
+    targets: list[CaptureTarget] = []
+
+    for default in DEFAULT_PLAN:
+        found = reported.get(default.key)
+        target = CaptureTarget(**{**default.__dict__})
+        if not found or not str(found.get("url", "")).strip():
+            warnings.append(f"{default.key}: no URL reported, keeping the default (uncalibrated)")
+            targets.append(target)
+            continue
+
+        url, fmt, parameterised = templatize_dates(str(found["url"]))
+        target.url = url
+        target.date_format = fmt
+        target.calibrated = True
+        if found.get("expect_text"):
+            target.expect_text = str(found["expect_text"])
+
+        # A screen whose date range never reaches the URL cannot be pointed at a
+        # past week, which is exactly what backfill needs. Say so loudly now
+        # rather than letting six weeks silently report the same numbers.
+        if not parameterised:
+            reported_dates = found.get("dates_in_url")
+            warnings.append(
+                f"{default.key}: the date range is not in its URL"
+                + ("" if reported_dates is False else " (none detected)")
+                + " -- this screen will show whatever range the browser "
+                  "remembers, so its numbers cannot be trusted for a past week"
+            )
+        targets.append(target)
+
+    # The samples filter is a click script, not a URL.
+    sequence = raw.get("samples_click_sequence") or []
+    chip = str(raw.get("samples_applied_filter_text") or "").strip()
+    if sequence:
+        actions: list[dict] = []
+        for label in sequence:
+            actions.append({"click": f"text={label}"})
+            actions.append({"wait_ms": 700})
+        for target in targets:
+            if target.key == "samples":
+                target.actions = actions
+                if chip:
+                    # Proving the filter applied is the whole safety story here.
+                    target.expect_text = chip
+                elif not target.expect_text:
+                    warnings.append(
+                        "samples: no applied-filter text reported, so a filter "
+                        "that fails to apply would be captured as every order")
+    else:
+        warnings.append("samples: no click sequence reported, so it stays uncalibrated")
+
+    return save_plan(targets, plan_path), warnings

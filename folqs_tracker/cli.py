@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from .capture import (CaptureError, SessionExpired, calibrate, capture_all,
-                      load_plan, save_session)
+                      import_calibration, load_plan, save_session)
 from .config import TrackerSettings
 from .derive import derive, deltas
 from .models import ALL_ROWS, WeeklyMetrics, coerce
@@ -589,6 +589,21 @@ def _collect_week(week: Week, args, settings, extract_metrics, find_screenshots)
     return metrics
 
 
+def cmd_import_calibration(args, settings: TrackerSettings) -> int:
+    """Fold a browser session's reconnaissance JSON into the capture plan."""
+    raw = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    path, warnings = import_calibration(raw, settings.capture_plan)
+    plan = load_plan(settings.capture_plan)
+    done = [t.key for t in plan if t.calibrated]
+    print(f"Wrote {path}")
+    print(f"  {len(done)}/{len(plan)} target(s) calibrated: {', '.join(done) or 'none'}")
+    for warning in warnings:
+        print(f"  WARNING {warning}", file=sys.stderr)
+    if options := raw.get("order_tag_options"):
+        print(f"  order tag options reported: {options}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="folqs_tracker",
@@ -625,6 +640,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     cal = sub.add_parser("calibrate", help="Record the real Seller Center URLs for your account")
     cal.set_defaults(func=cmd_calibrate)
+
+    imp = sub.add_parser("import-calibration",
+                         help="Load the JSON from a Claude-in-Chrome recon session")
+    imp.add_argument("file", help="Path to the JSON file")
+    imp.set_defaults(func=cmd_import_calibration)
 
     cap = sub.add_parser("capture", help="Take this week's screenshots and stop")
     cap.add_argument("--week", help="Week label, e.g. '21/08-27/08'")

@@ -13,7 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from folqs_tracker.capture import (DEFAULT_PLAN, CaptureTarget, load_plan,
-                                   looks_logged_out, save_plan, templatize_dates)
+                                   import_calibration, looks_logged_out,
+                                   save_plan, templatize_dates)
 from folqs_tracker.derive import derive, deltas
 from folqs_tracker.models import ALL_ROWS, WeeklyMetrics, coerce, format_value
 from folqs_tracker.report import Report
@@ -488,6 +489,43 @@ def test_backfill_skips_weeks_that_are_already_complete():
     print("backfill skipping OK")
 
 
+def test_browser_recon_json_becomes_a_capture_plan():
+    """The Chrome session reports what it saw; this folds it into the plan."""
+    import tempfile
+
+    recon = {
+        "targets": [
+            {"key": "shop_analytics",
+             "url": "https://s.tiktok.com/compass?start_date=2026-07-03&end_date=2026-07-09",
+             "dates_in_url": True, "expect_text": "Items Sold"},
+            {"key": "account_health", "url": "https://s.tiktok.com/account-health",
+             "dates_in_url": False, "expect_text": "Shop Performance Score"},
+        ],
+        "samples_click_sequence": ["Filter", "Order Tag", "Free Sample from Seller", "Apply"],
+        "samples_applied_filter_text": "Order Tag: Free Sample from Seller",
+    }
+
+    with tempfile.TemporaryDirectory() as d:
+        path, warnings = import_calibration(recon, Path(d) / "plan.json")
+        plan = {t.key: t for t in load_plan(path)}
+
+    # Dates are re-parameterised, so the plan can be pointed at any week.
+    assert plan["shop_analytics"].calibrated
+    assert plan["shop_analytics"].resolve_url(week_containing(date(2026, 8, 26))) == \
+        "https://s.tiktok.com/compass?start_date=2026-08-21&end_date=2026-08-27"
+    assert plan["shop_analytics"].expect_text == "Items Sold"
+
+    # The samples filter becomes a click script guarded by the applied-filter chip.
+    assert [a["click"] for a in plan["samples"].actions if "click" in a] == [
+        "text=Filter", "text=Order Tag", "text=Free Sample from Seller", "text=Apply"]
+    assert plan["samples"].expect_text == "Order Tag: Free Sample from Seller"
+
+    # Screens that cannot be pointed at a past week must be called out.
+    assert any("account_health" in w and "not in its URL" in w for w in warnings), warnings
+    assert any("creator" in w for w in warnings), "an unreported screen must warn"
+    print("calibration import OK")
+
+
 TESTS = [
     test_weeks_match_the_trackers_own_history,
     test_derivations_reproduce_the_sheet,
@@ -515,6 +553,7 @@ TESTS = [
     test_archiving_the_same_week_three_times_loses_nothing,
     test_backfill_walks_weeks_in_order_and_appends_columns,
     test_backfill_skips_weeks_that_are_already_complete,
+    test_browser_recon_json_becomes_a_capture_plan,
 ]
 
 if __name__ == "__main__":

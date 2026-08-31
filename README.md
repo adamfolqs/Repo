@@ -246,6 +246,19 @@ yourself (2FA included), and only the resulting browser session is saved — to
 `.tiktok_session.json`, owner-readable, gitignored. When it expires the run
 stops with exit code 2 and tells you to run `login` again.
 
+If you have the Claude Chrome extension, `CALIBRATION_PROMPT.md` is a
+ready-made prompt for a browser session: it visits the six screens in your
+logged-in Chrome, records the real URLs and the exact Order Tag labels, and
+returns JSON. Then:
+
+```bash
+python -m folqs_tracker import-calibration recon.json
+```
+
+That folds it into `capture_plan.json`, re-parameterises the dates so the plan
+works for any week, and warns about any screen whose date range never reaches
+its URL — those cannot be pointed at a past week, which matters for backfill.
+
 `calibrate` exists because Seller Center URLs carry account-specific ids and
 change between releases, so shipping guessed URLs would be worse than asking
 once. It writes `capture_plan.json`, which then takes precedence over the
