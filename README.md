@@ -146,3 +146,216 @@ Notes:
   low result count diagnosable without re-scraping.
 - Short share links (`tiktok.com/t/...`) are resolved automatically. Note they
   embed the sharing account's id — avoid pasting them anywhere public.
+
+---
+
+# Weekly performance tracker
+
+An automated, scheduled bot for the weekly TikTok Shop review. It replaces the
+manual loop — count the samples, screenshot the dashboards, paste them into
+Claude, retype the numbers into the wiki — with one Friday job.
+
+```
+screenshots ─► Claude (vision) ─┐
+sample tracker ─► samples sent ─┼─► derive + cross-check ─► Weekly Performance tab
+manual --set values ────────────┘                        └─► email digest + Telegram
+```
+
+## What it writes into
+
+The **Folqs TikTok Shop Wiki**, tab **`Weekly Performance (1)`**. That tab is
+*transposed* — metrics are rows and each week is a new **column** — so the job
+appends a column, it does not append a row. Week labels are `DD/MM–DD/MM` with
+an **en dash**, Friday to Thursday, matching every column already there.
+
+Six rows are computed rather than read, using formulas checked against the
+tracker's own May–July history: `AOV = GMV/Orders`, `CTR = Clicks/Impressions`,
+`CTOR = Orders/Clicks`, `GMV Per Video = Affiliate GMV/Videos Posted`,
+`Cost Per Order = Cost/Ad Orders`, `Sample COGS = Samples × $15`.
+
+If a screenshot *also* shows one of those, both are kept and any disagreement is
+flagged — that is how a misread digit gets caught before it reaches the sheet.
+
+## Setup
+
+Two ready-made handoff prompts live at the repo root:
+
+- **`LOCAL_SETUP_PROMPT.md`** — paste into Claude Code on the machine that will
+  run the tracker. Takes it from a fresh clone to a scheduled job.
+- **`CALIBRATION_PROMPT.md`** — paste into a Claude session with the Chrome
+  extension. It walks the six Seller Center screens in an already-logged-in
+  browser and returns JSON for `import-calibration`.
+
+Or do it by hand:
+
+```bash
+./scripts/setup.sh
+```
+
+Creates the virtualenv, installs the dependencies, downloads the matching
+Chromium, copies `.env.example` to `.env`, then tells you which credentials are
+still missing and what to run next.
+
+This has to happen on the machine that will run the tracker, not in a cloud
+session. The point of the capture step is a real browser logged into your
+Seller Center from a residential IP; a datacenter IP gets captcha-walled, which
+is measured at the top of this README.
+
+Three credentials are needed:
+
+1. **`ANTHROPIC_API_KEY`** — reads the screenshots.
+2. **`service_account.json`** — a Google service account. **Share the wiki and
+   the sample tracker with its `client_email` as an Editor**; without that you
+   get a 403.
+3. **SMTP + Telegram** — see the comments in `.env.example`. Gmail needs an App
+   Password, and a Telegram bot cannot message you until you message it first.
+
+Then confirm everything the scheduled job depends on:
+
+```bash
+python -m folqs_tracker check      # credentials, tab layout, which column it would write
+python -m folqs_tracker notify-test # proves the email and Telegram actually arrive
+```
+
+## Weekly use
+
+Drop the week's analytics screenshots in `data/tracking/inbox/` — that folder's
+README lists the exact Seller Center paths for each metric, which span Shop
+analytics, Product analytics, the Creator tab, the Orders tab (free-sample
+order tag), Ads Manager and Account Health. Then:
+
+```bash
+python -m folqs_tracker run --dry-run --print-report   # read + report, write nothing
+python -m folqs_tracker run                            # the real thing
+python -m folqs_tracker run --set retainer_payments=2050
+```
+
+Useful flags: `--week 21/08-27/08` or `--week-ending 2026-08-27` to redo an
+earlier week, `--samples-sent 26` to override the counted figure, `--overwrite`
+to replace existing cells, `--no-notify` to stay quiet.
+
+## Taking the screenshots automatically
+
+The bot can collect the screens itself instead of waiting for you to paste them
+in. Set it up once:
+
+```bash
+python -m folqs_tracker login       # opens a browser; log in by hand (incl. 2FA)
+python -m folqs_tracker calibrate   # walk the 6 screens, it records their URLs
+python -m folqs_tracker capture --headed   # test a capture run, watch it work
+```
+
+Then the weekly job takes its own screenshots:
+
+```bash
+python -m folqs_tracker run --capture
+```
+
+**No password is ever stored.** `login` opens a real browser, you log in
+yourself (2FA included), and only the resulting browser session is saved — to
+`.tiktok_session.json`, owner-readable, gitignored. When it expires the run
+stops with exit code 2 and tells you to run `login` again.
+
+If you have the Claude Chrome extension, `CALIBRATION_PROMPT.md` is a
+ready-made prompt for a browser session: it visits the six screens in your
+logged-in Chrome, records the real URLs and the exact Order Tag labels, and
+returns JSON. Then:
+
+```bash
+python -m folqs_tracker import-calibration recon.json
+```
+
+That folds it into `capture_plan.json`, re-parameterises the dates so the plan
+works for any week, and warns about any screen whose date range never reaches
+its URL — those cannot be pointed at a past week, which matters for backfill.
+
+`calibrate` exists because Seller Center URLs carry account-specific ids and
+change between releases, so shipping guessed URLs would be worse than asking
+once. It writes `capture_plan.json`, which then takes precedence over the
+built-in defaults. The samples screen needs a click sequence rather than a URL
+(Filters → Order Tag → free-sample options → Apply), so its `actions` list has
+to be filled in by hand — the file has a comment saying so, and until it is,
+that target fails with an explanation instead of capturing the wrong screen.
+
+Two guards make automated capture safe to leave unattended:
+
+- **A login page is never captured.** A logged-out Seller Center screenshots
+  perfectly, and feeding that to the extractor would produce a week of blanks
+  with no visible cause. Every capture is checked, before and after its click
+  script, and an expired session aborts the run rather than continuing.
+- **Every screen must prove it is the right screen.** Each target asserts a
+  string it must contain (`GMV`, `Impressions`, `Cost`, …). Proxy errors,
+  TikTok's own "something went wrong", and empty states all render and
+  screenshot just fine — the assertion is what stops one being saved as data.
+  A screen that fails is reported in the digest; the other five still run.
+
+## Catching up on missed weeks
+
+The tracker had drifted about six weeks behind. `backfill` runs the ordinary
+weekly pipeline once per week over a range:
+
+```bash
+python -m folqs_tracker backfill --dry-run          # show the plan, write nothing
+python -m folqs_tracker backfill --capture          # collect and fill each week
+python -m folqs_tracker backfill --from 17/07-23/07 --to 21/08-27/08
+```
+
+With no `--from` it starts at the first week that is not already complete, and
+with no `--to` it stops at the last complete week. Weeks that already have
+their numbers are skipped (`--redo` forces them), and existing cells are kept
+unless you pass `--overwrite`.
+
+Three things make it safe to point at a long range:
+
+- **Weeks are processed oldest first.** The tab appends each new week as the
+  next column, so order is structural, not cosmetic. The sheet is re-read after
+  each write so the following week lands in the column after it.
+- **One bad week does not cost the others.** A week whose screenshots are
+  missing or unreadable is recorded as failed and the run continues; the exit
+  code is non-zero and the digest names it. The exception is an expired login,
+  which stops the run, because every later week would fail identically.
+- **One digest for the whole catch-up**, not six emails.
+
+With `--capture` this is a lot of browser work and one vision call per week, so
+it prints what it is about to spend before it starts.
+
+## Scheduling
+
+```bash
+./scripts/install_schedule.sh              # Fridays 09:00
+./scripts/install_schedule.sh --at 17:30
+./scripts/install_schedule.sh --status
+./scripts/install_schedule.sh --uninstall
+```
+
+macOS gets a **launchd** agent, Linux a **cron** entry. launchd is the better
+of the two here: it runs a job it missed while the Mac was asleep, whereas cron
+silently skips it. Every run logs to `data/tracking/logs/`.
+
+Weeks close Thursday night, so the job runs Friday morning. If the inbox is
+empty when it fires, the digest says so plainly and tells you to drop the
+screenshots and re-run — it does not quietly report a week of blanks.
+
+## Design rules
+
+- **Never invent a number.** Anything unreadable comes back `null`, stays an
+  empty cell, and is listed in the digest. A plausible guess is indistinguishable
+  from a reading once it is in the sheet, and these numbers drive spend.
+- **Empty, never zero.** A `0` would drag down every average computed over the row.
+- **A re-run never clobbers a manual edit.** If a cell already holds a different
+  value the job keeps it and reports the conflict; `--overwrite` opts out.
+- **Screenshots are archived once read**, so next week's unattended run cannot
+  re-read them and report stale numbers as current.
+- **Numbers are snapshotted to disk before anything remote is touched**, so a
+  failed sheet write or a bounced email never costs the extraction.
+
+## Tests
+
+```bash
+python tests/test_tracker.py
+```
+
+13 tests, no network. Covers the week math against the tracker's real labels,
+every derived formula against real July figures, section scoping (`Orders`
+exists under both `OVERALL METRICS` and `GMV MAX`), new-column writes,
+idempotent re-runs, sample counting, and digest rendering.

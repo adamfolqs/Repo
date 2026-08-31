@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS launchd job for the weekly performance tracker.
+
+  Weeks close on Thursday night, so this fires Friday morning. launchd (unlike
+  cron) will run a job it missed while the Mac was asleep or shut down, which is
+  the whole reason to prefer it here — a laptop that was closed on Friday still
+  gets its Friday run.
+
+  __REPO_DIR__ is replaced by scripts/install_schedule.sh at install time.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.folqs.weekly-tracker</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO_DIR__/scripts/run_weekly_tracker.sh</string>
+        <string>--capture</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key><integer>5</integer>
+        <key>Hour</key><integer>9</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO_DIR__</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO_DIR__/data/tracking/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO_DIR__/data/tracking/logs/launchd.err.log</string>
+</dict>
+</plist>
