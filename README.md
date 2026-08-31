@@ -179,9 +179,17 @@ flagged — that is how a misread digit gets caught before it reaches the sheet.
 ## Setup
 
 ```bash
-pip install -r requirements.txt
-cp .env.example .env          # fill in the tracker section
+./scripts/setup.sh
 ```
+
+Creates the virtualenv, installs the dependencies, downloads the matching
+Chromium, copies `.env.example` to `.env`, then tells you which credentials are
+still missing and what to run next.
+
+This has to happen on the machine that will run the tracker, not in a cloud
+session. The point of the capture step is a real browser logged into your
+Seller Center from a residential IP; a datacenter IP gets captcha-walled, which
+is measured at the top of this README.
 
 Three credentials are needed:
 
