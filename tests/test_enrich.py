@@ -59,6 +59,26 @@ def test_brand_disambiguation():
     assert match_brand("no brands here at all") == ""
     print("  brand disambiguation OK (@mention and word-boundary scoring)")
 
+def test_email_not_invented_from_prose():
+    """The obfuscated-email reader must not carve addresses out of running text.
+
+    All three of these were real false positives found in the scraped bios:
+    a bio link became an address because "at" sits inside "heather".
+    """
+    from tiktok_scraper.enrich import extract_email
+    assert extract_email("I help people with gut issues 🌱FNTP 📍CA",
+                         "https://detoxheather.com/links/") == ""
+    assert extract_email("Physician, health educator. Ask your doctor for "
+                         "medical advice.") == ""
+    assert extract_email("Trying and Reviewing Products",
+                         "https://www.scaledcreator.com?ref=Letmetryit") == ""
+    # ...while genuine obfuscation still resolves.
+    assert extract_email("reach me at name (at) gmail dot com") == "name@gmail.com"
+    assert extract_email("hola arroba marca punto es") == "hola@marca.es"
+    assert extract_email("📧 carolyndiaz909@yahoo.com") == "carolyndiaz909@yahoo.com"
+    print("  addresses are never carved out of prose OK")
+
+
 def test_brand_accounts():
     """The brand's own account is not an outreach target."""
     from tiktok_scraper.enrich import is_brand_account
@@ -108,7 +128,8 @@ def test_product_tag_not_erased():
 
 if __name__ == "__main__":
     for fn in [test_language, test_email, test_brand_and_product, test_colostrum_filter,
-               test_brand_disambiguation, test_brand_accounts, test_skeptical,
+               test_brand_disambiguation, test_email_not_invented_from_prose,
+               test_brand_accounts, test_skeptical,
                test_product_tag_not_erased]:
         print(fn.__name__ + ":"); fn()
     print("\nALL ENRICH TESTS PASSED")

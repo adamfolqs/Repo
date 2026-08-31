@@ -69,11 +69,27 @@ def detect_language(text: str | None) -> tuple[str, str]:
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 # Creators obfuscate to dodge scrapers: "name (at) gmail dot com".
+# The separators must be standalone words, not letters sitting inside one.
+# Without the boundaries this matched the "at" inside "heather", turning the
+# bio link detoxheather.com into the address detoxhe@her.com -- a real-looking
+# address for a person who never published one. Same bug read "health
+# educator. Ask your doctor" as educ@or.ask. A written-out separator also has
+# to be spaced ("name at gmail dot com"); "at"/"dot" jammed against the text
+# is prose, not obfuscation.
 _OBFUSCATED_RE = re.compile(
-    r"([A-Za-z0-9._%+-]+)\s*[\(\[]?\s*(?:at|@|arroba)\s*[\)\]]?\s*"
-    r"([A-Za-z0-9.-]+)\s*[\(\[]?\s*(?:dot|punto|\.)\s*[\)\]]?\s*([A-Za-z]{2,})",
+    r"([A-Za-z0-9._%+-]+)\s*(?:[\(\[]\s*(?:at|@|arroba)\s*[\)\]]|\s(?:at|arroba)\s|@)\s*"
+    r"([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)\s*"
+    r"(?:[\(\[]\s*(?:dot|punto)\s*[\)\]]|\s(?:dot|punto)\s|\.)\s*([A-Za-z]{2,})",
     re.I,
 )
+
+# TLDs a creator actually puts in a bio. An "address" ending in anything else
+# is prose the regex chewed through.
+_PLAUSIBLE_TLDS = {
+    "com", "net", "org", "co", "io", "me", "biz", "info", "shop", "store",
+    "studio", "club", "agency", "email", "us", "uk", "ca", "au", "es", "mx",
+    "de", "fr", "it", "nl", "se", "ie", "nz", "tv", "app", "link", "site",
+}
 
 
 def extract_email(*texts: str | None) -> str:
@@ -92,7 +108,8 @@ def extract_email(*texts: str | None) -> str:
         obfuscated = _OBFUSCATED_RE.search(cleaned)
         if obfuscated:
             user, domain, tld = obfuscated.groups()
-            return f"{user}@{domain}.{tld}".lower()
+            if tld.lower() in _PLAUSIBLE_TLDS and len(user) >= 3:
+                return f"{user}@{domain}.{tld}".lower()
     return ""
 
 
