@@ -35,41 +35,101 @@ def normalize_address(value: str | None) -> str:
     return match.group(0).lower() if match else ""
 
 
-def load_replies(path: Path = REPLIES) -> dict[str, dict]:
-    """Newest reply per sender address."""
+_BOUNCE_RE = re.compile(
+    r"(?:wasn't delivered to|not delivered to|failed permanently to)\s+"
+    r"([\w.+-]+@[\w.-]+\.\w+)", re.I
+)
+
+
+def attribute(item: dict, roster_emails: set[str]) -> str:
+    """Which recipient a reply belongs to — often not who sent it.
+
+    Three cases seen in the first hour of the real campaign, all of which a
+    plain sender-address match gets wrong:
+
+    * a bounce arrives from mailer-daemon and names the dead address in its
+      body, so the address is parsed out of the text;
+    * an explicit `for` field, when the reply itself says who it is about
+      (an agency answering on behalf of a creator it represents);
+    * a colleague replies from their own address on the same domain
+      (philip@mightyjoy.com for julie@, emma@ for lottie@), so a unique
+      same-domain recipient is the match. Only when it is unique -- two
+      creators at one agency would make the guess a coin flip.
+    """
+    sender = normalize_address(item.get("from"))
+    if sender in roster_emails:
+        return sender
+
+    if "mailer-daemon" in sender or "postmaster" in sender:
+        found = _BOUNCE_RE.search(item.get("snippet") or "")
+        if found and found.group(1).lower() in roster_emails:
+            return found.group(1).lower()
+        return ""
+
+    stated = normalize_address(item.get("for"))
+    if stated in roster_emails:
+        return stated
+
+    domain = sender.rsplit("@", 1)[-1] if "@" in sender else ""
+    if domain:
+        same = [e for e in roster_emails if e.endswith("@" + domain)]
+        if len(same) == 1:
+            return same[0]
+    return ""
+
+
+def load_replies(path: Path = REPLIES, roster_emails: set[str] | None = None) -> dict[str, dict]:
+    """Newest reply per *recipient*, attributed via `attribute()`."""
     if not path.exists():
         return {}
-    by_sender: dict[str, dict] = {}
+    roster_emails = roster_emails or set()
+    by_recipient: dict[str, dict] = {}
     for item in json.loads(path.read_text(encoding="utf-8")):
-        address = normalize_address(item.get("from"))
+        address = attribute(item, roster_emails)
         if not address:
             continue
-        current = by_sender.get(address)
+        current = by_recipient.get(address)
         if not current or (item.get("date") or "") > (current.get("date") or ""):
-            by_sender[address] = item
-    return by_sender
+            by_recipient[address] = item
+    return by_recipient
 
 
-def classify(snippet: str) -> str:
+# An autoresponder that says "thanks for your interest" reads as a hot lead to
+# any keyword matcher. Since "interested" is the number that decides who gets
+# chased first, auto-replies have to be ruled out before enthusiasm is scored,
+# and the subject line is where they announce themselves most reliably.
+_AUTO_SUBJECT = ("automatic reply", "auto reply", "auto-reply", "autoreply",
+                 "out of office", "away from my", "thank you for your interest",
+                 "thanks for reaching out! re:")
+_AUTO_BODY = ("this is an automated", "automated response", "automatic reply",
+              "out of office", "annual leave", "on leave", "i am away",
+              "i'm away", "received your message and", "manage my own inbox",
+              "review all collaboration requests")
+
+
+def classify(snippet: str, subject: str = "") -> str:
     """Rough triage so the interesting replies surface first.
 
     Keyword-based and therefore fallible -- it decides sort order and a label,
     never whether someone is contacted again, so a misread costs a glance
-    rather than a mistake. 'interested' is checked last so a message that both
-    shares a number and declines is not read as a win.
+    rather than a mistake. Order matters more than the keywords: a decline that
+    also shares a number is a decline, and an autoresponder that thanks you for
+    your interest is not a lead.
     """
     text = (snippet or "").lower()
+    head = (subject or "").lower()
     if any(w in text for w in ("unsubscribe", "not interested", "no thanks",
                                "stop emailing", "remove me", "no gracias")):
         return "declined"
-    if any(w in text for w in ("out of office", "away from", "on leave",
-                               "automatic reply", "autoreply")):
-        return "auto-reply"
     if any(w in text for w in ("undeliverable", "delivery has failed",
                                "address not found", "mailer-daemon")):
         return "bounced"
-    if any(w in text for w in ("whatsapp", "+1", "+52", "my number", "rate",
-                               "interested", "sounds good", "yes", "me interesa")):
+    if any(w in head for w in _AUTO_SUBJECT) or any(w in text for w in _AUTO_BODY):
+        return "auto-reply"
+    if any(w in text for w in ("whatsapp", "+1", "+52", "my number", "i charge",
+                               "flat rate", "my rate", "interested", "sounds good",
+                               "me interesa", "open to", "would love", "send me",
+                               "more details", "learn more")):
         return "interested"
     return "replied"
 
@@ -80,7 +140,11 @@ def main() -> int:
         return 1
 
     rows = list(csv.DictReader(ROSTER.open(encoding="utf-8")))
-    replies = load_replies()
+    roster_emails = {
+        (r["email"] or "").lower() for r in rows
+        if r["segment"] != "EXCLUDED" and r["email"]
+    }
+    replies = load_replies(roster_emails=roster_emails)
 
     counts = {"interested": 0, "replied": 0, "declined": 0,
               "auto-reply": 0, "bounced": 0}
@@ -92,7 +156,7 @@ def main() -> int:
             # Leave 'sent'/'not sent' alone: absence of a reply is not a status
             # change, and overwriting it would erase the send record.
             continue
-        status = classify(hit.get("snippet", ""))
+        status = classify(hit.get("snippet", ""), hit.get("subject", ""))
         row["reply_status"] = status
         row["replied_at"] = (hit.get("date") or "")[:19]
         row["reply_snippet"] = (hit.get("snippet") or "").replace("\n", " ")[:180]

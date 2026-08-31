@@ -20,6 +20,35 @@ def test_classify():
     assert classify("who is this") == "replied"
     print("  reply triage OK")
 
+def test_attribution_when_the_sender_is_not_the_recipient():
+    """All three cases are from the real campaign's first hour."""
+    from track_replies import attribute
+    roster = {"julie@mightyjoy.com", "collabs@leeleecreates.com",
+              "adoseofwellness@nowadaystalent.com", "hello@x.com"}
+    # bounce names the dead address in its body
+    assert attribute({"from":"mailer-daemon@googlemail.com",
+        "snippet":"Your message wasn't delivered to collabs@leeleecreates.com because..."},
+        roster) == "collabs@leeleecreates.com"
+    # colleague replies from their own address on the same domain
+    assert attribute({"from":"philip@mightyjoy.com","snippet":"we don't use whatsapp"},
+                     roster) == "julie@mightyjoy.com"
+    # agency states who it is answering for
+    assert attribute({"from":"kaspar@nowadaystalent.com","snippet":"strong fit",
+                      "for":"adoseofwellness@nowadaystalent.com"},
+                     roster) == "adoseofwellness@nowadaystalent.com"
+    # an unrelated stranger is not attributed to anyone
+    assert attribute({"from":"random@elsewhere.com","snippet":"hi"}, roster) == ""
+    print("  reply attribution (bounce / colleague / agency) OK")
+
+
+def test_ambiguous_domain_is_not_guessed():
+    """Two recipients at one agency: guessing would credit the wrong creator."""
+    from track_replies import attribute
+    roster = {"a@agency.com", "b@agency.com"}
+    assert attribute({"from":"boss@agency.com","snippet":"interested"}, roster) == ""
+    print("  ambiguous same-domain reply left unattributed OK")
+
+
 def test_absent_reply_does_not_clear_sent():
     d = pathlib.Path(tempfile.mkdtemp())
     roster = d / "campaign_roster.csv"
@@ -39,6 +68,9 @@ def test_absent_reply_does_not_clear_sent():
     print("  no-reply leaves the send record intact OK")
 
 if __name__ == "__main__":
-    for fn in [test_address, test_classify, test_absent_reply_does_not_clear_sent]:
+    for fn in [test_address, test_classify,
+               test_attribution_when_the_sender_is_not_the_recipient,
+               test_ambiguous_domain_is_not_guessed,
+               test_absent_reply_does_not_clear_sent]:
         print(fn.__name__ + ":"); fn()
     print("\nALL TRACK-REPLY TESTS PASSED")
