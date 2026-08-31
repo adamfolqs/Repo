@@ -119,7 +119,14 @@ def classify(snippet: str, subject: str = "") -> str:
     text = (snippet or "").lower()
     head = (subject or "").lower()
     if any(w in text for w in ("unsubscribe", "not interested", "no thanks",
-                               "stop emailing", "remove me", "no gracias")):
+                               "stop emailing", "remove me", "no gracias",
+                               # Polite mismatch declines, which is how a
+                               # wrongly-targeted creator actually answers.
+                               "going to pass", "gonna pass", "pass on this",
+                               "not a natural fit", "not a fit",
+                               "not a good fit", "wouldn't be a fit",
+                               "don't promote", "do not promote",
+                               "have to decline", "will decline")):
         return "declined"
     if any(w in text for w in ("undeliverable", "delivery has failed",
                                "address not found", "mailer-daemon")):
