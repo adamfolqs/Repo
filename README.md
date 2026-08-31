@@ -178,6 +178,16 @@ flagged — that is how a misread digit gets caught before it reaches the sheet.
 
 ## Setup
 
+Two ready-made handoff prompts live at the repo root:
+
+- **`LOCAL_SETUP_PROMPT.md`** — paste into Claude Code on the machine that will
+  run the tracker. Takes it from a fresh clone to a scheduled job.
+- **`CALIBRATION_PROMPT.md`** — paste into a Claude session with the Chrome
+  extension. It walks the six Seller Center screens in an already-logged-in
+  browser and returns JSON for `import-calibration`.
+
+Or do it by hand:
+
 ```bash
 ./scripts/setup.sh
 ```
