@@ -18,6 +18,11 @@ def test_classify():
     assert classify("I am out of office until Monday") == "auto-reply"
     assert classify("Address not found") == "bounced"
     assert classify("who is this") == "replied"
+    # A rate card is the yes: creators quote a price without ever saying
+    # "interested", and burying those in the generic pile loses real leads.
+    assert classify("I am only accepting paid collaborations, $200 per video") == "interested"
+    # ...but a decline that quotes a rate is still a decline.
+    assert classify("Going to pass on this one, my rates are $200 per video") == "declined"
     print("  reply triage OK")
 
 def test_attribution_when_the_sender_is_not_the_recipient():

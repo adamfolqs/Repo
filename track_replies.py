@@ -136,7 +136,12 @@ def classify(snippet: str, subject: str = "") -> str:
     if any(w in text for w in ("whatsapp", "+1", "+52", "my number", "i charge",
                                "flat rate", "my rate", "interested", "sounds good",
                                "me interesa", "open to", "would love", "send me",
-                               "more details", "learn more")):
+                               "more details", "learn more",
+                               # A creator who answers with a price is a lead,
+                               # even when the mail never says "interested" --
+                               # a rate card IS the yes.
+                               "per video", "my rates", "rate card",
+                               "paid collaborations", "packages available")):
         return "interested"
     return "replied"
 
