@@ -91,7 +91,9 @@ waiting on an answer.**
 **Declined (2):** @in.good.hands.collective (129.2k — human colostrum /
 breastfeeding education, not bovine: a targeting miss); @thegutgirlie (12.4k —
 workload).
-**Bounced (1):** @leeleesfavfinds — `leeleecreates.com` does not resolve.
+**Bounced (2):** @leeleesfavfinds (75.9k) — `leeleecreates.com` does not
+resolve; @click.flicks.ugc (30.9k) — Gmail address does not exist. Neither
+was ever delivered, so 132 of the 134 actually landed.
 **Auto-replies (4).**
 
 **Signal worth acting on:** 6 of 16 pushed back on WhatsApp. The CTA is the
@@ -132,6 +134,11 @@ changed. **Delete it when the campaign is done.**
   cost 3 missed replies before it was caught. Sweep by `get_thread` on each
   campaign thread id, and use search only to catch bounces and autoresponders,
   which arrive on threads of their own.
+- **Bounces never match a subject search:** a Gmail bounce is subject
+  "Delivery Status Notification (Failure)", so `subject:("Folqs Bovine
+  Colostrum")` cannot find one. It only surfaces because it sits on the
+  campaign thread — another reason to sweep by thread id. One bounce hid
+  this way for 18 hours.
 
 ## 6. Open threads
 
