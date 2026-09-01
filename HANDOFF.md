@@ -1,6 +1,6 @@
 # Handoff — Folqs colostrum creator sourcing + outreach
 
-State as of **2026-08-31 18:30 UTC**. Everything below is committed and pushed.
+State as of **2026-09-01 08:30 UTC**. Everything below is committed and pushed.
 
 - **Repo/branch:** `adamfolqs/Repo` → `claude/tiktok-colostrum-scraping-1m98qn` (PR #2)
 - **Workbook:** `data/output/colostrum_creator_list.xlsx` — 6 tabs, `Outreach` first
@@ -59,41 +59,51 @@ Thread ids: `data/outreach/campaign_threads.json`. Copy:
 **4 excluded on purpose:** brand-owned accounts, and creators who posted
 critical/debunking colostrum content — a retainer pitch to them backfires.
 
-### Replies so far — 14 / 134 (10%)
+### Replies so far — 22 / 134 (16%)
 
-**Interested (11):**
+**Interested (16):**
 
 | Handle | Followers | Anchor | Email | Ask |
 |---|---|---|---|---|
 | @nutritionbyjulie | 306k | generic | julie@mightyjoy.com | via mgr Philip — **no WhatsApp**, wants details + budget |
+| @jennymurcia9 | 81.3k | Miracle Moo (ES) | jennycollab9@gmail.com | claims **$2.5M GMV** in Spanish-speaking US — unverified |
 | @themayhughs | 58.5k | Bloom | kaily@a-listme.com | via agency Logan — **sent rates + analytics link** |
 | @daniloshopfinds | 41.6k | Physician's Choice | huntersipovac@gmail.com | open to hearing more |
+| @o_m_briii | 30.7k | Cymbiotika | ombri.24@lumasocialagency.com | **$800/video, $1,600/3 videos**; WhatsApp +1 (310) 948-7728 |
 | @11lisamariet | 12.9k | ARMRA | contactlisamarie11@gmail.com | interested, **prefers email** |
 | @hellomrshockett | 12.6k | generic | hellomrshockett@gmail.com | **6056900645** |
 | @mollymcshane13 | 8.5k | Miracle Moo | mollymcshane13@gmail.com | wants retainer details |
 | @dawndeeeeee | 7.8k | Bloom | dawndcreator@gmail.com | wants deliverables, video count, rate |
 | @oliviaa_x6 | 5.1k | Miracle Moo | oliviaslifestyle22@gmail.com | interested, **no WhatsApp** |
 | @renatovar | 3.8k | Bloom | renasttshop@gmail.com | quotes **$500 flat** |
+| @herbfairytiera | 3.8k | ARMRA | herbfairytiera@gmail.com | checked out Folqs, keen |
+| @lifebeyondthelisting | 3.8k | ARMRA | lifebeyondthelisting@gmail.com | wants details |
 | @icedbeverly4l | 2.9k | Cymbiotika | emilywarumugc@gmail.com | **516-668-3243** |
+| @kodyhatt | 2.9k | generic | ttshopkodyhatt@gmail.com | wants rate, deliverables, timeline |
 | @ciarathemodel | 811 | generic | ciaraalicia2001@gmail.com | wants details |
 
-**Replied (3):** @adoseofwellness and @therealjnic_ole (both via
-`kaspar@nowadaystalent.com`, claiming **$162k** and **$60k** 30-day GMV —
-unverified sales claims from someone pitching us); @creakzshop (positive).
+**Replied (4):** @adoseofwellness (107.9k) and @therealjnic_ole (80.3k), both via
+`kaspar@nowadaystalent.com` claiming **$162k** and **$60k** 30-day GMV —
+unverified sales claims from someone pitching us; @creakzshop (64.1k, positive);
+@katzammuto (16.3k) — **asked "what is the name of the brand?" and is still
+waiting on an answer.**
 
+**Declined (2):** @in.good.hands.collective (129.2k — human colostrum /
+breastfeeding education, not bovine: a targeting miss); @thegutgirlie (12.4k —
+workload).
 **Bounced (1):** @leeleesfavfinds — `leeleecreates.com` does not resolve.
 **Auto-replies (4).**
 
-**Signal worth acting on:** 5 of 11 pushed back on WhatsApp. The CTA is the
+**Signal worth acting on:** 6 of 16 pushed back on WhatsApp. The CTA is the
 friction point with this list — they skew manager/email.
 
 ## 4. Live automation
 
 Routine `trig_01VXoygdwzeuU3LuFAQ32YXQ` — "Colostrum outreach — hourly reply
-sweep", fires **:23 past each hour** into the original session. It searches
-Gmail, appends to `data/outreach/replies.json`, runs `track_replies.py`,
-rebuilds the Outreach tab, commits, and reports only what changed.
-Verified working at 18:23. **Delete it when the campaign is done.**
+sweep", fires **:23 past each hour** into the original session. It reads the
+nine campaign threads by id, appends to `data/outreach/replies.json`, runs
+`track_replies.py`, rebuilds the workbook, commits, and reports only what
+changed. **Delete it when the campaign is done.**
 
 ## 5. Traps already hit — don't rediscover
 
@@ -115,6 +125,13 @@ Verified working at 18:23. **Delete it when the campaign is done.**
 - **Alix Earle** is a fan of *colostrum*, not of Folqs — every mention in the
   scrape is Cymbiotika's liquid colostrum from a podcast. The copy keeps her
   inside the trend sentence. Don't move her next to the product.
+
+- **Gmail search previews hide new replies:** `search_threads` returns only the
+  ~5 *oldest* messages per thread and shows no truncation marker. On a BCC blob
+  thread with dozens of recipients that silently buries every later reply — it
+  cost 3 missed replies before it was caught. Sweep by `get_thread` on each
+  campaign thread id, and use search only to catch bounces and autoresponders,
+  which arrive on threads of their own.
 
 ## 6. Open threads
 
