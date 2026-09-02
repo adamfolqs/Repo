@@ -80,18 +80,42 @@ def attribute(item: dict, roster_emails: set[str]) -> str:
 
 def load_replies(path: Path = REPLIES, roster_emails: set[str] | None = None) -> dict[str, dict]:
     """Newest reply per *recipient*, attributed via `attribute()`."""
+    return {a: items[-1] for a, items in load_reply_threads(path, roster_emails).items()}
+
+
+def load_reply_threads(path: Path = REPLIES,
+                       roster_emails: set[str] | None = None) -> dict[str, list[dict]]:
+    """Every reply per *recipient*, oldest first, attributed via `attribute()`.
+
+    The whole exchange matters, not just its last line: once someone has said
+    yes, the next mail is usually logistics ("here's my address"), and reading
+    only that would quietly demote a closed deal back to a lead.
+    """
     if not path.exists():
         return {}
     roster_emails = roster_emails or set()
-    by_recipient: dict[str, dict] = {}
+    by_recipient: dict[str, list[dict]] = {}
     for item in json.loads(path.read_text(encoding="utf-8")):
         address = attribute(item, roster_emails)
-        if not address:
-            continue
-        current = by_recipient.get(address)
-        if not current or (item.get("date") or "") > (current.get("date") or ""):
-            by_recipient[address] = item
+        if address:
+            by_recipient.setdefault(address, []).append(item)
+    for items in by_recipient.values():
+        items.sort(key=lambda i: i.get("date") or "")
     return by_recipient
+
+
+def status_for(items: list[dict]) -> str:
+    """The status of a whole exchange.
+
+    An acceptance sticks: only a later decline or a bounce can undo it.
+    """
+    latest = classify(items[-1].get("snippet", ""), items[-1].get("subject", ""))
+    if latest in ("declined", "bounced"):
+        return latest
+    if any(classify(i.get("snippet", ""), i.get("subject", "")) == "accepted"
+           for i in items):
+        return "accepted"
+    return latest
 
 
 # An autoresponder that says "thanks for your interest" reads as a hot lead to
@@ -155,6 +179,9 @@ def classify(snippet: str, subject: str = "") -> str:
     # than chasing. Phrasing here has to imply commitment, not enthusiasm:
     # "sounds great, tell me more" is still only interest.
     if any(w in text for w in ("looking forward to getting started",
+                               "cannot wait to start", "can't wait to start",
+                               "cant wait to start", "cannot wait to get started",
+                               "can't wait to get started",
                                "let's get started", "lets get started",
                                "let's do it", "lets do it", "happy to proceed",
                                "count me in", "sign me up", "i'm in!", "im in!",
@@ -188,19 +215,20 @@ def main() -> int:
         (r["email"] or "").lower() for r in rows
         if r["segment"] != "EXCLUDED" and r["email"]
     }
-    replies = load_replies(roster_emails=roster_emails)
+    threads = load_reply_threads(roster_emails=roster_emails)
 
     counts = {"accepted": 0, "interested": 0, "replied": 0, "declined": 0,
               "auto-reply": 0, "bounced": 0}
     for row in rows:
         if row["segment"] == "EXCLUDED":
             continue
-        hit = replies.get((row["email"] or "").lower())
-        if not hit:
+        items = threads.get((row["email"] or "").lower())
+        if not items:
             # Leave 'sent'/'not sent' alone: absence of a reply is not a status
             # change, and overwriting it would erase the send record.
             continue
-        status = classify(hit.get("snippet", ""), hit.get("subject", ""))
+        hit = items[-1]
+        status = status_for(items)
         row["reply_status"] = status
         row["replied_at"] = (hit.get("date") or "")[:19]
         row["reply_snippet"] = (hit.get("snippet") or "").replace("\n", " ")[:180]

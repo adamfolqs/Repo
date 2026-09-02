@@ -1,7 +1,7 @@
 """Reply triage and matching."""
 import sys, pathlib, json, csv, tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from track_replies import classify, normalize_address, load_replies
+from track_replies import classify, normalize_address, load_replies, status_for
 
 def test_address():
     assert normalize_address("Jen Lauren <Jen@Example.com>") == "jen@example.com"
@@ -38,6 +38,16 @@ def test_classify():
     # interested because it is pitching a creator, not because of the figure.
     assert classify("She has driven $162k in recent 30-day TikTok Shop GMV") == "replied"
     assert classify("@x could be a strong fit; she drove $162k in GMV") == "interested"
+
+def test_acceptance_survives_the_logistics_that_follow_it():
+    yes = {"date": "2026-09-01", "snippet": "Looking forward to getting started!"}
+    address = {"date": "2026-09-02", "snippet": "Of course! It is 3 Midridge Circle"}
+    assert status_for([yes]) == "accepted"
+    assert status_for([yes, address]) == "accepted", "a shipping address is not a downgrade"
+    # A later decline still wins -- people do back out.
+    backs_out = {"date": "2026-09-03", "snippet": "Actually I have to decline, sorry"}
+    assert status_for([yes, address, backs_out]) == "declined"
+    print("  acceptance is sticky OK")
     print("  reply triage OK")
 
 def test_attribution_when_the_sender_is_not_the_recipient():
@@ -89,6 +99,7 @@ def test_absent_reply_does_not_clear_sent():
 
 if __name__ == "__main__":
     for fn in [test_address, test_classify,
+               test_acceptance_survives_the_logistics_that_follow_it,
                test_attribution_when_the_sender_is_not_the_recipient,
                test_ambiguous_domain_is_not_guessed,
                test_absent_reply_does_not_clear_sent]:
