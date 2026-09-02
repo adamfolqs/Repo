@@ -186,7 +186,12 @@ def classify(snippet: str, subject: str = "") -> str:
                                "let's do it", "lets do it", "happy to proceed",
                                "count me in", "sign me up", "i'm in!", "im in!",
                                "we have a deal", "i accept", "acepto",
-                               "vamos a hacerlo")):
+                               "vamos a hacerlo",
+                               # In this campaign the address is only asked for
+                               # once terms are agreed, so sending one is a yes
+                               # even when the words around it are just polite.
+                               "my address is", "shipping address",
+                               "thanks for working with me")):
         return "accepted"
     if any(w in text for w in ("whatsapp", "+1", "+52", "my number", "i charge",
                                "flat rate", "my rate", "interested", "sounds good",

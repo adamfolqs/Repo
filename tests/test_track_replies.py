@@ -47,6 +47,9 @@ def test_acceptance_survives_the_logistics_that_follow_it():
     # A later decline still wins -- people do back out.
     backs_out = {"date": "2026-09-03", "snippet": "Actually I have to decline, sorry"}
     assert status_for([yes, address, backs_out]) == "declined"
+    # Sending an address is itself the yes: the address is only requested
+    # once terms are agreed, so the polite words around it do not matter.
+    assert classify("That sounds great! My address is 1 Example St") == "accepted"
     print("  acceptance is sticky OK")
     print("  reply triage OK")
 
