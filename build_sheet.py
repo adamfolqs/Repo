@@ -32,6 +32,7 @@ from tiktok_scraper.models import Creator, Video
 
 OUT = Path("data/output/colostrum_creator_list.xlsx")
 ORIGINAL = Path("data/input/colostrum_sourcing.xlsx")
+ROSTER = Path("data/outreach/campaign_roster.csv")
 
 MIN_LIKES = 50
 
@@ -98,6 +99,55 @@ def write_tab(wb: Workbook, title: str, columns: list[str], rows: list[list]) ->
     for row in rows:
         ws.append(row)
     style(ws)
+
+
+# ------------------------------------------------------------------ outreach
+
+# Hottest first. The order is the point of the tab: whoever is closest to a
+# signed deal sits at the top, and the two dead-end states sink to the bottom.
+STATUS_ORDER = ["accepted", "interested", "replied", "auto-reply", "sent",
+                "declined", "bounced", "not sent"]
+STATUS_FILL = {
+    "accepted":   PatternFill("solid", fgColor="86EFAC"),
+    "interested": PatternFill("solid", fgColor="D9F99D"),
+    "replied":    PatternFill("solid", fgColor="FEF08A"),
+    "auto-reply": PatternFill("solid", fgColor="E5E7EB"),
+    "declined":   PatternFill("solid", fgColor="FECACA"),
+    "bounced":    PatternFill("solid", fgColor="FCA5A5"),
+}
+OUTREACH_COLUMNS = ["reply_status", "handle", "followers", "email", "anchor_brand",
+                    "language", "qualifying_videos", "replied_at", "reply_snippet",
+                    "profile_url", "sent_at", "segment", "notes"]
+
+
+def outreach_rows() -> list[list]:
+    """The campaign roster, hottest first.
+
+    Lives here rather than in a one-off script because build_sheet.py rebuilds
+    the workbook from scratch every run: a tab assembled anywhere else is
+    silently dropped the next time this is called.
+    """
+    if not ROSTER.exists():
+        return []
+    rows = []
+    for row in csv.DictReader(ROSTER.open(encoding="utf-8")):
+        status = row.get("reply_status") or "not sent"
+        rows.append([status] + [row.get(c, "") for c in OUTREACH_COLUMNS[1:]])
+    rank = {s: i for i, s in enumerate(STATUS_ORDER)}
+    rows.sort(key=lambda r: (rank.get(r[0], len(rank)),
+                             -int(r[2] or 0)))
+    return rows
+
+
+def write_outreach_tab(wb: Workbook, rows: list[list]) -> None:
+    ws = wb.create_sheet("Outreach", 0)
+    ws.append(OUTREACH_COLUMNS)
+    for row in rows:
+        ws.append(row)
+        fill = STATUS_FILL.get(row[0])
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+    style(ws, widths={"reply_snippet": 60, "notes": 30, "email": 32})
 
 
 def video_row(video: Video, columns: list[str]) -> list:
@@ -385,6 +435,8 @@ def main() -> int:
     original_rows, filled = match_original_sheet(colostrum, creators)
 
     # ---- write -----------------------------------------------------------
+    outreach = outreach_rows()
+
     wb = Workbook()
     wb.remove(wb.active)
     write_tab(wb, "Videos", video_columns,
@@ -395,6 +447,7 @@ def main() -> int:
               [video_row(v, video_columns) for v in skeptical])
     write_tab(wb, "All Colostrum Videos", video_columns,
               [video_row(v, video_columns) for v in colostrum_sorted])
+    write_outreach_tab(wb, outreach)   # index 0: the tab opened first
     OUT.parent.mkdir(parents=True, exist_ok=True)
     wb.save(OUT)
 
@@ -405,6 +458,7 @@ def main() -> int:
     csv_dir = OUT.parent / "tabs"
     csv_dir.mkdir(exist_ok=True)
     for name, columns, rows in [
+        ("Outreach", OUTREACH_COLUMNS, outreach),
         ("Videos", video_columns, [video_row(v, video_columns) for v in qualifying]),
         ("Creators", creator_columns, creator_rows),
         ("Original Sheet + Handles", ORIGINAL_HEADER, original_rows),
@@ -432,6 +486,7 @@ def main() -> int:
     with_followers = sum(1 for row in creator_rows if row[2])
 
     print(f"wrote {OUT}")
+    print(f"  Outreach (campaign roster, hottest first)  : {len(outreach)}")
     print(f"  Videos (colostrum, {MIN_LIKES}+ likes, product-tagged): {len(qualifying)}")
     print(f"  Creators                                  : {len(creator_rows)}")
     print(f"  Original Sheet + Handles                  : {len(original_rows)} "

@@ -134,6 +134,11 @@ changed. **Delete it when the campaign is done.**
   cost 3 missed replies before it was caught. Sweep by `get_thread` on each
   campaign thread id, and use search only to catch bounces and autoresponders,
   which arrive on threads of their own.
+- **The workbook is rebuilt from scratch every run.** `build_sheet.py`
+  creates a new `Workbook()`, so any tab assembled by a one-off script is
+  silently dropped on the next rebuild -- which is exactly what happened to
+  the Outreach tab. It is now built inside `build_sheet.py` from
+  `campaign_roster.csv`. Never add a tab from outside that file.
 - **Bounces never match a subject search:** a Gmail bounce is subject
   "Delivery Status Notification (Failure)", so `subject:("Folqs Bovine
   Colostrum")` cannot find one. It only surfaces because it sits on the

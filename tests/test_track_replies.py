@@ -23,6 +23,10 @@ def test_classify():
     assert classify("I am only accepting paid collaborations, $200 per video") == "interested"
     # ...but a decline that quotes a rate is still a decline.
     assert classify("Going to pass on this one, my rates are $200 per video") == "declined"
+    # A yes to terms is its own state -- it needs invoicing, not chasing.
+    assert classify("That sounds great! Looking forward to getting started!") == "accepted"
+    # Enthusiasm short of commitment is still only a lead.
+    assert classify("That sounds great, can you send more details?") == "interested"
     print("  reply triage OK")
 
 def test_attribution_when_the_sender_is_not_the_recipient():

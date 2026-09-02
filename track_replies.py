@@ -133,6 +133,17 @@ def classify(snippet: str, subject: str = "") -> str:
         return "bounced"
     if any(w in head for w in _AUTO_SUBJECT) or any(w in text for w in _AUTO_BODY):
         return "auto-reply"
+    # Someone who has said yes to terms is not the same as a warm lead, and
+    # burying the two together loses the one row that needs invoicing rather
+    # than chasing. Phrasing here has to imply commitment, not enthusiasm:
+    # "sounds great, tell me more" is still only interest.
+    if any(w in text for w in ("looking forward to getting started",
+                               "let's get started", "lets get started",
+                               "let's do it", "lets do it", "happy to proceed",
+                               "count me in", "sign me up", "i'm in!", "im in!",
+                               "we have a deal", "i accept", "acepto",
+                               "vamos a hacerlo")):
+        return "accepted"
     if any(w in text for w in ("whatsapp", "+1", "+52", "my number", "i charge",
                                "flat rate", "my rate", "interested", "sounds good",
                                "me interesa", "open to", "would love", "send me",
@@ -158,7 +169,7 @@ def main() -> int:
     }
     replies = load_replies(roster_emails=roster_emails)
 
-    counts = {"interested": 0, "replied": 0, "declined": 0,
+    counts = {"accepted": 0, "interested": 0, "replied": 0, "declined": 0,
               "auto-reply": 0, "bounced": 0}
     for row in rows:
         if row["segment"] == "EXCLUDED":
@@ -180,7 +191,8 @@ def main() -> int:
         writer.writerows(rows)
 
     sent = sum(1 for r in rows if r["sent_at"])
-    replied = sum(counts[k] for k in ("interested", "replied", "declined"))
+    replied = sum(counts[k] for k in ("accepted", "interested", "replied",
+                                      "declined"))
     print(f"roster: {len(rows)} rows, {sent} marked sent")
     for key, value in counts.items():
         if value:
