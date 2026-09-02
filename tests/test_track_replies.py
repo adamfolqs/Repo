@@ -27,6 +27,17 @@ def test_classify():
     assert classify("That sounds great! Looking forward to getting started!") == "accepted"
     # Enthusiasm short of commitment is still only a lead.
     assert classify("That sounds great, can you send more details?") == "interested"
+    # Rate cards arrive in shapes no phrase list will cover; the price itself
+    # is the signal.
+    assert classify("Here are my video rates: 1 video: $1,500") == "interested"
+    assert classify("My rate is 500 USD for a single video") == "interested"
+    # A price inside a decline or an autoresponder must not read as a lead.
+    assert classify("I have to decline, my rate is $1,500") == "declined"
+    assert classify("I am out of office. My rate is $1,500") == "auto-reply"
+    # A performance boast is not a price. An agency quoting past GMV is
+    # interested because it is pitching a creator, not because of the figure.
+    assert classify("She has driven $162k in recent 30-day TikTok Shop GMV") == "replied"
+    assert classify("@x could be a strong fit; she drove $162k in GMV") == "interested"
     print("  reply triage OK")
 
 def test_attribution_when_the_sender_is_not_the_recipient():

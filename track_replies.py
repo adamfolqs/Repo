@@ -101,6 +101,23 @@ def load_replies(path: Path = REPLIES, roster_emails: set[str] | None = None) ->
 _AUTO_SUBJECT = ("automatic reply", "auto reply", "auto-reply", "autoreply",
                  "out of office", "away from my", "thank you for your interest",
                  "thanks for reaching out! re:")
+# A quoted price is the most reliable "yes, let's talk terms" signal there is,
+# and it survives phrasing the keyword list will never anticipate -- "$200 per
+# video", "1 video: $1,500", "my rate is 500 USD". Declines and autoresponders
+# are ruled out before this is consulted, so a price inside a "no thanks" or an
+# out-of-office cannot be misread as interest.
+_PRICE_RE = re.compile(r"(?:[$£€]\s?\d|\b\d[\d,.]*\s?(?:usd|eur|gbp)\b)", re.I)
+
+# ...but a figure quoted as past performance is a boast, not a price. Agencies
+# open with "has driven $162k in GMV", which is a different claim from "$250 per
+# video" and must not be read as one.
+# The figure and the word can sit a clause apart -- "$162k in recent 30-day
+# TikTok Shop GMV" -- so allow some distance, but not across a sentence break.
+_BOAST_RE = re.compile(
+    r"(?:[$£€]\s?[\d,.]+\s?[kmb]?\b[^.!?\n]{0,40}?"
+    r"\b(?:gmv|sales|revenue|earnings|views)\b"
+    r"|\b(?:gmv|sales|revenue|earnings)\b[^.!?\n]{0,20}?[$£€]\s?[\d,.]+)", re.I)
+
 _AUTO_BODY = ("this is an automated", "automated response", "automatic reply",
               "out of office", "annual leave", "on leave", "i am away",
               "i'm away", "received your message and", "manage my own inbox",
@@ -152,7 +169,11 @@ def classify(snippet: str, subject: str = "") -> str:
                                # even when the mail never says "interested" --
                                # a rate card IS the yes.
                                "per video", "my rates", "rate card",
-                               "paid collaborations", "packages available")):
+                               "paid collaborations", "packages available",
+                               # How a manager says yes on a creator's behalf.
+                               "strong fit", "could be a fit", "good fit for")):
+        return "interested"
+    if _PRICE_RE.search(_BOAST_RE.sub(" ", text)):
         return "interested"
     return "replied"
 
