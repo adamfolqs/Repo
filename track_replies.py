@@ -164,6 +164,7 @@ def classify(snippet: str, subject: str = "") -> str:
                                # Polite mismatch declines, which is how a
                                # wrongly-targeted creator actually answers.
                                "going to pass", "gonna pass", "pass on this",
+                               "have to pass", "will pass on", "i'll pass",
                                "not a natural fit", "not a fit",
                                "not a good fit", "wouldn't be a fit",
                                "don't promote", "do not promote",

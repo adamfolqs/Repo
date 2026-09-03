@@ -23,6 +23,7 @@ def test_classify():
     assert classify("I am only accepting paid collaborations, $200 per video") == "interested"
     # ...but a decline that quotes a rate is still a decline.
     assert classify("Going to pass on this one, my rates are $200 per video") == "declined"
+    assert classify("I will have to pass, thank you!") == "declined"
     # A yes to terms is its own state -- it needs invoicing, not chasing.
     assert classify("That sounds great! Looking forward to getting started!") == "accepted"
     # Enthusiasm short of commitment is still only a lead.
