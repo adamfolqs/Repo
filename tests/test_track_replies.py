@@ -50,6 +50,7 @@ def test_acceptance_survives_the_logistics_that_follow_it():
     # Sending an address is itself the yes: the address is only requested
     # once terms are agreed, so the polite words around it do not matter.
     assert classify("That sounds great! My address is 1 Example St") == "accepted"
+    assert classify("Totally understand. Let's move forward with this then") == "accepted"
     print("  acceptance is sticky OK")
     print("  reply triage OK")
 

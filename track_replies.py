@@ -186,6 +186,8 @@ def classify(snippet: str, subject: str = "") -> str:
                                "let's do it", "lets do it", "happy to proceed",
                                "count me in", "sign me up", "i'm in!", "im in!",
                                "we have a deal", "i accept", "acepto",
+                               "let's move forward", "lets move forward",
+                               "move forward with this",
                                "vamos a hacerlo",
                                # In this campaign the address is only asked for
                                # once terms are agreed, so sending one is a yes
