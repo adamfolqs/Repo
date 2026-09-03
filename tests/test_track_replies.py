@@ -51,6 +51,9 @@ def test_acceptance_survives_the_logistics_that_follow_it():
     # once terms are agreed, so the polite words around it do not matter.
     assert classify("That sounds great! My address is 1 Example St") == "accepted"
     assert classify("Totally understand. Let's move forward with this then") == "accepted"
+    assert classify("This all sounds good to me. Looking forward to it") == "accepted"
+    # ...but bare "sounds good" answering nothing in particular is not a yes.
+    assert classify("Sounds good, can you send more details?") == "interested"
     print("  acceptance is sticky OK")
     print("  reply triage OK")
 

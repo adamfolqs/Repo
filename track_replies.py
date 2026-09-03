@@ -188,6 +188,10 @@ def classify(snippet: str, subject: str = "") -> str:
                                "we have a deal", "i accept", "acepto",
                                "let's move forward", "lets move forward",
                                "move forward with this",
+                               # Agreement to terms already on the table. Note
+                               # "sounds good" on its own stays mere interest --
+                               # it is the "all"/"to me" that answers an offer.
+                               "all sounds good", "sounds good to me",
                                "vamos a hacerlo",
                                # In this campaign the address is only asked for
                                # once terms are agreed, so sending one is a yes
