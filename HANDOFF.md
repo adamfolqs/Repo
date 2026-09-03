@@ -128,6 +128,12 @@ changed. **Delete it when the campaign is done.**
   scrape is Cymbiotika's liquid colostrum from a podcast. The copy keeps her
   inside the trend sentence. Don't move her next to the product.
 
+- **Gmail search misses just-arrived mail.** Two replies sat unrecorded for
+  six hours because a `newer_than:1h` search did not return their thread,
+  even though both messages fell inside the window -- search indexing lags
+  delivery, and `newer_than` is documented only for d/m/y units anyway. The
+  sweep no longer leads with a search: it diffs all nine campaign threads by
+  id every run, which is the only method that has never missed anything.
 - **Gmail search previews hide new replies:** `search_threads` returns only the
   ~5 *oldest* messages per thread and shows no truncation marker. On a BCC blob
   thread with dozens of recipients that silently buries every later reply — it
