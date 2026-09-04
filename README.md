@@ -119,12 +119,120 @@ handling, and schema/sink agreement. No network required.
 - If `playwright` starts returning `BlockedError`, that is the IP, not the code —
   switch provider or route through a residential IP.
 
+## What each TikTok surface actually serves
+
+Measured from this egress path, not assumed. This is the map the sourcing
+pipeline is built around, and the thing worth re-checking first if results
+suddenly drop:
+
+| Surface | Serves data? | How |
+|---|---|---|
+| `/@handle` | **yes** | SSR blob: profile + follower/like counts |
+| `/@handle/video/<id>` | **yes** | SSR blob: exact like/view/comment/share/save |
+| `/embed/@handle` | **yes** | state blob: 10 most recent posts, no pagination |
+| `/discover/<keyword>` | **yes** | client-rendered grid, ~60 videos, needs a browser |
+| `/search?q=` | no | login-walled — renders skeletons, results XHR never fires |
+| `/tag/<hashtag>` | no | client-rendered, nothing behind it |
+| profile video grid | no | login-walled; `/api/post/item_list/` needs signed params |
+| `shop.tiktok.com` PDP | partial | product data yes, creator videos are in-app only |
+
+The consequence: **discovery and enrichment are separate problems.** Keyword
+pages are the only surface that will name videos it has not been asked about,
+and they carry no engagement numbers. Every number comes from opening the
+video's own page afterwards.
+
+Note the earlier finding that `www.tiktok.com` captcha-walls profile pages did
+**not** reproduce here — profile and video pages served full SSR data. Check
+before assuming you need a paid provider; the wall is IP-dependent.
+
+### The pipeline
+
+```bash
+# 1. keywords -> video URLs (browser; follows related keyword pages)
+python -m tiktok_scraper discover --keyword-file data/input/discover_keywords.txt \
+    --per-keyword 150 --crawl-depth 2
+
+# 2. every creator found -> their other recent posts, added to the same list
+python -m tiktok_scraper catalogue
+
+# 3. video URLs -> full rows with real numbers (plain HTTP, no browser)
+#    --priority-handles fetches creators already known to post about colostrum
+#    first, which is what you want whenever there are more URLs than time
+python -m tiktok_scraper resolve --priority-handles
+
+# 4. handles -> follower count + bio email
+python -m tiktok_scraper profiles
+
+# 5. display names from the sourcing sheet -> verified handles
+python -m tiktok_scraper names
+
+# 6. assemble the workbook
+python build_sheet.py
+```
+
+`discover` and `catalogue` both append to the same URL list and can run at the
+same time; the list merges on write rather than overwriting.
+
+### Handles are verified, never derived
+
+`names` exists because display names cannot be turned into handles by
+transformation — they are not unique, and a handle often looks nothing like the
+name it shows (`Creakzzz` is `@creakzshop`; `@creakzzz` is somebody else). So it
+proposes candidates, opens each profile, and keeps one only if the account that
+loaded says it is that person.
+
+The recording shows **display names**, so a display-name match is the
+confirmation. A label that merely spells a real handle is recorded but marked
+`unconfirmed`. Labels too generic to identify one account (`jacquie`,
+`Unreadable creator`) are reported as unresolvable rather than resolved to
+whichever account happens to answer. Externally suggested handles — from a web
+search — go through the same check, so a wrong suggestion is rejected rather
+than trusted.
+
+Result on the 177-row sheet: 20 handles before, 125 after.
+
+Each stage appends to a JSONL store and skips ids already in it, so a stage
+that dies partway **resumes rather than restarts**. The full sweep takes hours
+at a polite request rate, so this matters more than it looks.
+
+### Running a browser behind an egress proxy
+
+Two things bite in a sandboxed environment, both already handled in
+`playwright_provider.py` but worth knowing:
+
+- Chromium's TLS 1.3 ClientHello carries a post-quantum key share (~1.8 kB).
+  Some proxies answer it with a TLS alert and drop the tunnel, so *every*
+  navigation fails as `ERR_CONNECTION_RESET` — for all hosts, which is how you
+  tell it apart from TikTok blocking you. The fix is `--ssl-version-max=tls1.2`,
+  not `--ignore-certificate-errors`.
+- Don't test for a captcha by matching `/captcha/` in the HTML. The captcha
+  SDK's asset URL is bundled into every normal TikTok page, so that reports a
+  wall on pages that loaded perfectly.
+
 ## Sourcing creators from TikTok Shop product pages
 
-The reliable way to build a creator list. A Shop product page lists the actual
-creators posting about that exact product, with canonical `@handles` — far
-better than matching display names, which are not unique and are often
-misread when taken from a screen recording.
+**This no longer works, and the `shop` command cannot fix it.** A Shop product
+page shows a creator-video section *in the app*, but the web PDP does not ship
+it. Checked on desktop and mobile user agents and across `shop.tiktok.com/us/pdp/`,
+`shop.tiktok.com/view/product/` and `www.tiktok.com/shop/pdp/`: the page data
+carries product, price and reviews, and zero `author` / `aweme` / `unique_id`
+fields. Review authors are anonymised (`B**8`), so they are not handles either.
+
+What still works is resolving the product links themselves — a short share link
+redirects to a PDP whose URL carries the product id and title. That is how the
+seven competitor products were confirmed (Micro Ingredients, Physician's Choice,
+Miracle Moo, Bloom Nutrition, Nutricost, ARMRA, Lemme). Their creators are then
+sourced by running those brand names through `discover`, which reaches the same
+people by a working door.
+
+> Careful with resolved share links: they embed the *sharing* account's
+> `unique_id` and `user_id`. Don't paste them anywhere public — only the product
+> id and title are kept in `data/output/competitor_products.json`.
+
+The original rationale, still true and still why handles matter:
+creator sourcing by *display name* is unreliable — names are not unique on
+TikTok and OCR'd names are often wrong or truncated, so a canonical `@handle`
+is worth much more than a name.
 
 ```bash
 # 1. Get creators + their videos from the product pages
@@ -146,3 +254,14 @@ Notes:
   low result count diagnosable without re-scraping.
 - Short share links (`tiktok.com/t/...`) are resolved automatically. Note they
   embed the sharing account's id — avoid pasting them anywhere public.
+
+## Where the output lives
+
+- `data/output/colostrum_creator_list.xlsx` — the deliverable, five tabs
+- `data/output/tabs/*.csv` — the same tabs as CSV
+- `data/output/tabs/drive/*.csv` — narrower copies, as uploaded to Drive
+- `data/output/videos.jsonl` / `creators.jsonl` — the raw resumable stores
+- `data/output/name_resolution.csv` — every sourcing-sheet name and its verdict
+
+A Google Drive folder mirrors the main tabs as native Sheets:
+**Colostrum Creator Sourcing — TikTok Scrape (Aug 2026)**.

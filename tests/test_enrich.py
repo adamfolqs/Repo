@@ -59,7 +59,77 @@ def test_brand_disambiguation():
     assert match_brand("no brands here at all") == ""
     print("  brand disambiguation OK (@mention and word-boundary scoring)")
 
+def test_email_not_invented_from_prose():
+    """The obfuscated-email reader must not carve addresses out of running text.
+
+    All three of these were real false positives found in the scraped bios:
+    a bio link became an address because "at" sits inside "heather".
+    """
+    from tiktok_scraper.enrich import extract_email
+    assert extract_email("I help people with gut issues 🌱FNTP 📍CA",
+                         "https://detoxheather.com/links/") == ""
+    assert extract_email("Physician, health educator. Ask your doctor for "
+                         "medical advice.") == ""
+    assert extract_email("Trying and Reviewing Products",
+                         "https://www.scaledcreator.com?ref=Letmetryit") == ""
+    # ...while genuine obfuscation still resolves.
+    assert extract_email("reach me at name (at) gmail dot com") == "name@gmail.com"
+    assert extract_email("hola arroba marca punto es") == "hola@marca.es"
+    assert extract_email("📧 carolyndiaz909@yahoo.com") == "carolyndiaz909@yahoo.com"
+    print("  addresses are never carved out of prose OK")
+
+
+def test_brand_accounts():
+    """The brand's own account is not an outreach target."""
+    from tiktok_scraper.enrich import is_brand_account
+    for handle in ["trymiraclemoo", "try.miraclemoo", "wondercowusa", "drinkarmra",
+                   "cowboycolostrum", "nutricost"]:
+        assert is_brand_account(handle), handle
+    # Creators who merely review a brand must NOT be flagged -- mislabelling
+    # one drops a real outreach target from the list entirely.
+    for handle in ["sarahtriedwondercow", "jenlaurenn", "whatmojoloves",
+                   "leahdajud", "creakzshop", "nicollefigueroaa"]:
+        assert not is_brand_account(handle), handle
+
+    # The display name is often the only tell: Bloom Nutrition posts as
+    # '@bloom', whose handle gives away nothing at all.
+    assert is_brand_account("bloom", "Bloom Nutrition")
+    assert is_brand_account("enjoywondercow", "WonderCow Colostrum 🐮✨")
+    assert is_brand_account("wondercowusa", None)
+
+    # ...but a creator whose display name merely mentions a brand is a
+    # creator. Flagging them would drop a real outreach target.
+    assert not is_brand_account("sarahtries", "Sarah tries Bloom Nutrition")
+    assert not is_brand_account("gutgirl", "Kayla | ARMRA obsessed")
+    print("  brand-owned account flagging OK (handle and display name)")
+
+
+def test_skeptical():
+    """Debunking videos are kept and marked, not dropped."""
+    from tiktok_scraper.enrich import is_skeptical
+    assert is_skeptical("Deinfluencing colostrum.. is colostrum worth it?")
+    assert is_skeptical("honest review: this was a waste of money")
+    assert is_skeptical("el calostro no funciona para nada")
+    assert not is_skeptical("day 30 of colostrum and my gut feels amazing")
+    print("  skeptical/debunking detection OK")
+
+
+def test_product_tag_not_erased():
+    """A provider's commerce-anchor signal survives text enrichment."""
+    from tiktok_scraper.models import Video
+    from tiktok_scraper.enrich import enrich_videos
+    # Caption names no brand and no shop words, but TikTok said it sells.
+    video = Video(video_id="7" + "0" * 18, handle="someone",
+                  description="my morning routine", has_product_tag=True)
+    enrich_videos([video])
+    assert video.has_product_tag is True, "structural product tag was erased"
+    print("  structural product-tag signal preserved OK")
+
+
 if __name__ == "__main__":
-    for fn in [test_language, test_email, test_brand_and_product, test_colostrum_filter, test_brand_disambiguation]:
+    for fn in [test_language, test_email, test_brand_and_product, test_colostrum_filter,
+               test_brand_disambiguation, test_email_not_invented_from_prose,
+               test_brand_accounts, test_skeptical,
+               test_product_tag_not_erased]:
         print(fn.__name__ + ":"); fn()
     print("\nALL ENRICH TESTS PASSED")

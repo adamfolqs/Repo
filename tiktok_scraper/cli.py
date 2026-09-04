@@ -15,6 +15,7 @@ from pathlib import Path
 from .config import Settings
 from .enrich import enrich_creators, enrich_videos, filter_videos
 from .inputs import normalize_handle, read_handles
+from . import store
 from .models import CREATOR_COLUMNS, VIDEO_COLUMNS, Creator, Video
 from .providers.base import BlockedError, ProviderError, get_provider
 from .sinks.files import write_csv, write_xlsx
@@ -232,6 +233,425 @@ def cmd_shop(args, settings: Settings) -> int:
     return 0 if videos else 1
 
 
+def _read_lines(path: str) -> list[str]:
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+
+
+def cmd_discover(args, settings: Settings) -> int:
+    """Stage 1: turn keywords into video URLs, via /discover/ landing pages.
+
+    Writes URLs to a file rather than resolving them here, because discovery
+    needs a browser and resolution does not -- keeping them apart means the
+    slow browser stage runs once and the cheap stage can be re-run freely.
+    """
+    from .providers.discover import DiscoverProvider
+
+    keywords = [k.strip() for k in (args.keywords or "").split(",") if k.strip()]
+    if args.keyword_file:
+        keywords.extend(_read_lines(args.keyword_file))
+    if not keywords:
+        print("No keywords. Pass --keywords a,b or --keyword-file <file>", file=sys.stderr)
+        return 2
+
+    out = Path(args.urls_out)
+    known: dict[str, str] = {}
+    if out.exists():
+        for handle, video_id in _read_url_rows(out):
+            known[video_id] = handle
+    print(f"{len(keywords)} keyword(s); {len(known)} URL(s) already on file")
+
+    provider = DiscoverProvider(
+        delay_seconds=settings.request_delay_seconds, headless=not args.headed
+    )
+    added_total = 0
+    # Worklist rather than a plain loop: a discover page links to related
+    # keyword pages, and following the on-topic ones is where most of the
+    # breadth comes from -- a single grid stops at ~60 videos however hard you
+    # scroll it, so more keywords beats more scrolling.
+    from .providers.discover import slugify
+
+    queue = [(k, 0) for k in keywords]
+    seen_slugs: set[str] = set()
+    index = 0
+    try:
+        while index < len(queue):
+            keyword, depth = queue[index]
+            index += 1
+            slug = slugify(keyword)
+            if not slug or slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+
+            try:
+                pairs, related = provider.fetch_discover_page(
+                    keyword, limit=args.per_keyword
+                )
+            except BlockedError as exc:
+                print(f"[{index}/{len(queue)}] {keyword!r} BLOCKED: {exc}", file=sys.stderr)
+                break
+            except ProviderError as exc:
+                print(f"[{index}/{len(queue)}] {keyword!r} failed: {exc}", file=sys.stderr)
+                continue
+
+            added = 0
+            for handle, video_id in pairs:
+                if video_id not in known:
+                    known[video_id] = handle
+                    added += 1
+            added_total += added
+
+            queued = 0
+            if depth < args.crawl_depth:
+                for candidate in related:
+                    if candidate not in seen_slugs:
+                        queue.append((candidate, depth + 1))
+                        queued += 1
+
+            print(f"[{index}/{len(queue)}] {keyword!r} (d{depth}): {len(pairs)} found, "
+                  f"{added} new, +{queued} related (total {len(known)})", flush=True)
+            _write_urls(out, known)
+    finally:
+        provider.close()
+
+    _write_urls(out, known)
+    print(f"\n{len(known)} unique video URLs ({added_total} new this run) -> {out}")
+    return 0
+
+
+def _read_url_rows(path) -> list[tuple[str, str]]:
+    """(handle, video_id) rows from the discovered-URL file.
+
+    Skips the header and any row whose id is not a TikTok video id, so a
+    malformed line can never be re-fetched as if it were a video.
+    """
+    rows = []
+    if not Path(path).exists():
+        return rows
+    for line in _read_lines(str(path)):
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 2 and parts[1].isdigit() and len(parts[1]) >= 15:
+            rows.append((parts[0], parts[1]))
+    return rows
+
+
+def _write_urls(path: Path, known: dict[str, str]) -> None:
+    """Write the URL list, merging with whatever is already on disk.
+
+    `discover` and `catalogue` both append to this file and are usefully run at
+    the same time. Each holds its own view loaded at startup, so a plain
+    overwrite means the last writer silently drops everything the other found
+    (measured: 3291 URLs collapsing back to 2894). Re-reading before each write
+    makes concurrent stages additive.
+
+    The write goes via a temporary file and an atomic rename, so a reader that
+    runs mid-write sees the old file rather than a truncated one.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    merged = {video_id: handle for handle, video_id in _read_url_rows(path)}
+    merged.update(known)
+    known.update(merged)
+
+    rows = ["handle,video_id"]
+    rows += [f"{handle},{video_id}" for video_id, handle in merged.items()]
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def cmd_resolve(args, settings: Settings) -> int:
+    """Stage 2: turn video URLs into full rows, reading each video's own page.
+
+    Every number here is the one TikTok served for that video. Anything that
+    cannot be resolved is recorded as a failure and left out, never estimated.
+    """
+    from .providers.http_ssr import HttpSSRProvider
+
+    pairs = _read_url_rows(args.urls)
+
+    already = store.done_keys(args.store, "video_id")
+    todo = [(h, v) for h, v in pairs if v not in already]
+    print(f"{len(pairs)} URLs on file, {len(already)} already resolved, "
+          f"{len(todo)} to fetch")
+
+    if args.priority_handles:
+        # There are always more URLs than there is time to fetch, so order
+        # matters: a creator who already has a colostrum video in the store is
+        # far likelier to have another in their back catalogue than an unknown
+        # handle is. Fetching those first means an interrupted run still ends
+        # up with the most on-topic set it could have.
+        # Recompute the topic from the stored caption rather than reading an
+        # is_colostrum column: resolve writes the raw record, and that column
+        # is only filled in later when the sheet is built.
+        from .enrich import is_colostrum as _is_colostrum
+
+        preferred = {
+            record["handle"].lower()
+            for record in store.read(args.store)
+            if record.get("handle") and _is_colostrum(
+                record.get("description"), " ".join(record.get("hashtags") or [])
+            )
+        }
+        if preferred:
+            todo.sort(key=lambda pair: pair[0].lower() not in preferred)
+            hits = sum(1 for h, _ in todo if h.lower() in preferred)
+            print(f"  prioritised {hits} URLs from {len(preferred)} creators "
+                  "already known to post about colostrum")
+    if args.max_items:
+        todo = todo[: args.max_items]
+        print(f"  limited to {len(todo)} this run")
+
+    provider = HttpSSRProvider(delay_seconds=settings.request_delay_seconds)
+    ok = fail = 0
+    try:
+        for i, (handle, video_id) in enumerate(todo, 1):
+            url = f"https://www.tiktok.com/@{handle}/video/{video_id}"
+            try:
+                video = provider.fetch_video(url, matched_query=args.matched_query)
+                store.append(args.store, [video])
+                ok += 1
+            except BlockedError as exc:
+                print(f"  BLOCKED after {ok} ok: {exc}", file=sys.stderr)
+                break
+            except ProviderError as exc:
+                fail += 1
+                print(f"  [{i}] @{handle}/{video_id}: {exc}", file=sys.stderr)
+            if i % 25 == 0:
+                print(f"  [{i}/{len(todo)}] {ok} resolved, {fail} unavailable", flush=True)
+    finally:
+        provider.close()
+
+    print(f"\n{ok} resolved, {fail} unavailable -> {args.store}")
+    return 0
+
+
+def cmd_names(args, settings: Settings) -> int:
+    """Verify display names from the sourcing sheet against real profiles."""
+    import csv as _csv
+
+    from openpyxl import load_workbook
+
+    from .handles import normalize, resolve_name
+    from .models import Creator
+    from .providers.http_ssr import HttpSSRProvider
+
+    workbook = load_workbook(args.sheet, data_only=True)
+    worksheet = workbook[args.sheet_tab]
+    rows = list(worksheet.iter_rows(values_only=True))
+    header = rows[0]
+    column = header.index(args.name_column)
+    names, seen = [], set()
+    for row in rows[1:]:
+        name = row[column] if row else None
+        if name and normalize(name) not in seen:
+            seen.add(normalize(name))
+            names.append(name)
+
+    known = {}
+    for record in store.read(args.creator_store):
+        try:
+            creator = Creator(**record)
+        except Exception:
+            continue
+        known[creator.handle.lower()] = creator
+
+    out = Path(args.out)
+    done: dict[str, dict] = {}
+    if out.exists():
+        with out.open(encoding="utf-8-sig") as fh:
+            for row in _csv.DictReader(fh):
+                done[normalize(row.get("name"))] = row
+
+    # Handles suggested from outside (a web search, a colleague). These are
+    # only ever *checked* -- they go through the same profile verification as
+    # a generated candidate, so an incorrect suggestion is rejected rather
+    # than trusted.
+    suggested: dict[str, list[str]] = {}
+    if args.candidates_file and Path(args.candidates_file).exists():
+        with open(args.candidates_file, encoding="utf-8-sig") as fh:
+            for row in _csv.DictReader(fh):
+                key = normalize(row.get("name"))
+                handle = (row.get("candidate_handle") or "").strip().lstrip("@")
+                if key and handle:
+                    suggested.setdefault(key, []).append(handle)
+
+    recheck = {normalize(n) for n in names if normalize(n) in suggested
+               and not (done.get(normalize(n), {}).get("confidence", "")
+                        .startswith("confirmed"))}
+    todo = [n for n in names if normalize(n) not in done or normalize(n) in recheck]
+    print(f"{len(names)} unique names, {len(done)} already resolved, {len(todo)} to check"
+          + (f" ({len(recheck)} rechecked with suggested handles)" if recheck else ""))
+    if args.max_items:
+        todo = todo[: args.max_items]
+
+    provider = HttpSSRProvider(delay_seconds=settings.request_delay_seconds)
+    confirmed = 0
+    try:
+        for i, name in enumerate(todo, 1):
+            try:
+                result = resolve_name(
+                    name, provider, known_creators=known,
+                    extra_candidates=suggested.get(normalize(name), []),
+                )
+            except BlockedError as exc:
+                print(f"  BLOCKED: {exc}", file=sys.stderr)
+                break
+            done[normalize(name)] = {
+                "name": name, "handle": result.handle,
+                "profile_url": result.profile_url,
+                "confidence": result.confidence,
+                "followers": result.followers if result.followers is not None else "",
+                "evidence": result.evidence,
+            }
+            if result.confidence.startswith("confirmed"):
+                confirmed += 1
+            print(f"  [{i}/{len(todo)}] {name!r:38} -> "
+                  f"{('@' + result.handle) if result.handle else '—':24} "
+                  f"{result.confidence}", flush=True)
+            if i % 10 == 0:
+                _write_names(out, done)
+    finally:
+        provider.close()
+
+    _write_names(out, done)
+    print(f"\n{confirmed} newly confirmed; {len(done)} names on file -> {out}")
+    return 0
+
+
+def _write_names(path: Path, done: dict[str, dict]) -> None:
+    import csv as _csv
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = ["name", "handle", "profile_url", "confidence", "followers", "evidence"]
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as fh:
+        writer = _csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader()
+        for row in done.values():
+            writer.writerow({k: row.get(k, "") for k in fields})
+    tmp.replace(path)
+
+
+def cmd_catalogue(args, settings: Settings) -> int:
+    """Stage 1b: add each known creator's other recent posts to the URL list.
+
+    One creator who posts about colostrum usually has several such posts, and
+    discovery only surfaces whichever one ranked for a keyword. This walks
+    every handle already found and adds their recent catalogue, which `resolve`
+    then picks up like any other URL.
+    """
+    from .providers.http_ssr import HttpSSRProvider
+
+    handles = sorted({
+        record["handle"] for record in store.read(args.from_store)
+        if record.get("handle")
+    })
+    handles.extend(_resolve_handles(args))
+
+    seen, ordered = set(), []
+    for handle in handles:
+        if handle.lower() not in seen:
+            seen.add(handle.lower())
+            ordered.append(handle)
+
+    out = Path(args.urls_out)
+    known: dict[str, str] = {}
+    if out.exists():
+        for handle, video_id in _read_url_rows(out):
+            known[video_id] = handle
+
+    done = set()
+    done_path = Path(args.done_file)
+    if done_path.exists():
+        done = {h.strip().lower() for h in done_path.read_text().split() if h.strip()}
+    todo = [h for h in ordered if h.lower() not in done]
+
+    print(f"{len(ordered)} creators, {len(done)} already walked, {len(todo)} to go; "
+          f"{len(known)} URLs on file")
+    if args.max_items:
+        todo = todo[: args.max_items]
+
+    provider = HttpSSRProvider(delay_seconds=settings.request_delay_seconds)
+    added_total = 0
+    try:
+        for i, handle in enumerate(todo, 1):
+            try:
+                ids = provider.fetch_creator_video_ids(handle, limit=args.per_creator)
+            except BlockedError as exc:
+                print(f"  BLOCKED: {exc}", file=sys.stderr)
+                break
+            except ProviderError as exc:
+                print(f"  [{i}] @{handle}: {exc}", file=sys.stderr)
+                ids = []
+            added = 0
+            for video_id in ids:
+                if video_id not in known:
+                    known[video_id] = handle
+                    added += 1
+            added_total += added
+            done.add(handle.lower())
+            if i % 20 == 0 or added:
+                print(f"  [{i}/{len(todo)}] @{handle}: {len(ids)} posts, {added} new "
+                      f"(total {len(known)})", flush=True)
+            if i % 10 == 0:
+                _write_urls(out, known)
+                done_path.write_text("\n".join(sorted(done)) + "\n")
+    finally:
+        provider.close()
+
+    _write_urls(out, known)
+    done_path.parent.mkdir(parents=True, exist_ok=True)
+    done_path.write_text("\n".join(sorted(done)) + "\n")
+    print(f"\n{added_total} new URLs from back catalogues -> {out}")
+    return 0
+
+
+def cmd_profiles(args, settings: Settings) -> int:
+    """Stage 3: follower count and bio (hence contact email) per creator."""
+    from .providers.http_ssr import HttpSSRProvider
+
+    handles: list[str] = []
+    if args.from_store:
+        handles = sorted({
+            record["handle"] for record in store.read(args.from_store)
+            if record.get("handle")
+        })
+    handles.extend(_resolve_handles(args))
+
+    seen, ordered = set(), []
+    for handle in handles:
+        if handle.lower() not in seen:
+            seen.add(handle.lower())
+            ordered.append(handle)
+
+    already = {h.lower() for h in store.done_keys(args.store, "handle")}
+    todo = [h for h in ordered if h.lower() not in already]
+    print(f"{len(ordered)} creators, {len(already)} already done, {len(todo)} to fetch")
+    if args.max_items:
+        todo = todo[: args.max_items]
+
+    provider = HttpSSRProvider(delay_seconds=settings.request_delay_seconds)
+    ok = fail = 0
+    try:
+        for i, handle in enumerate(todo, 1):
+            try:
+                creator = provider.fetch_creator(handle)
+                store.append(args.store, [creator])
+                ok += 1
+            except BlockedError as exc:
+                print(f"  BLOCKED after {ok} ok: {exc}", file=sys.stderr)
+                break
+            except ProviderError as exc:
+                fail += 1
+                print(f"  [{i}] @{handle}: {exc}", file=sys.stderr)
+            if i % 25 == 0:
+                print(f"  [{i}/{len(todo)}] {ok} ok, {fail} failed", flush=True)
+    finally:
+        provider.close()
+
+    print(f"\n{ok} profiles, {fail} failed -> {args.store}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tiktok_scraper",
@@ -284,6 +704,84 @@ def build_parser() -> argparse.ArgumentParser:
     shop.add_argument("--dump-raw", help="Directory to save raw intercepted JSON (for debugging)")
     common(shop)
     shop.set_defaults(func=cmd_shop)
+
+    discover = sub.add_parser(
+        "discover",
+        help="Source video URLs from /discover/ keyword pages (needs a browser)",
+    )
+    discover.add_argument("--keywords", help="Comma-separated keywords")
+    discover.add_argument("--keyword-file", help="File of keywords, one per line")
+    discover.add_argument("--per-keyword", type=int, default=120,
+                          help="Max video URLs per keyword (default 120)")
+    discover.add_argument("--urls-out", default="data/output/discovered_urls.csv",
+                          help="Where the deduped handle,video_id list accumulates")
+    discover.add_argument("--crawl-depth", type=int, default=0,
+                          help="Follow on-topic related keyword pages this many "
+                               "hops deep (default 0, i.e. seed keywords only)")
+    common(discover)
+    discover.set_defaults(func=cmd_discover)
+
+    resolve = sub.add_parser(
+        "resolve",
+        help="Fetch each discovered video's real stats from its own page",
+    )
+    resolve.add_argument("--urls", default="data/output/discovered_urls.csv")
+    resolve.add_argument("--store", default="data/output/videos.jsonl",
+                         help="Append-only store; a re-run skips what it holds")
+    resolve.add_argument("--matched-query", help="Attribution tag for this batch")
+    resolve.add_argument("--max-items", type=int, help="Stop after N this run")
+    resolve.add_argument("--priority-handles", action="store_true",
+                         help="Fetch creators already known to post about "
+                              "colostrum first (best use of a limited run)")
+    common(resolve)
+    resolve.set_defaults(func=cmd_resolve)
+
+    names = sub.add_parser(
+        "names",
+        help="Verify sourcing-sheet display names against real profiles",
+    )
+    names.add_argument("--sheet", default="data/input/colostrum_sourcing.xlsx")
+    names.add_argument("--sheet-tab", default="Creator Videos")
+    names.add_argument("--name-column", default="Creator label from recording")
+    names.add_argument("--creator-store", default="data/output/creators.jsonl")
+    names.add_argument("--out", default="data/output/name_resolution.csv")
+    names.add_argument("--candidates-file",
+                       default="data/input/handle_candidates.csv",
+                       help="CSV of name,candidate_handle to also check "
+                            "(suggestions are verified, never trusted)")
+    names.add_argument("--max-items", type=int, help="Stop after N this run")
+    common(names)
+    names.set_defaults(func=cmd_names)
+
+    catalogue = sub.add_parser(
+        "catalogue",
+        help="Add each found creator's other recent posts to the URL list",
+    )
+    catalogue.add_argument("--from-store", default="data/output/videos.jsonl")
+    catalogue.add_argument("--input", help="CSV/XLSX to read extra handles from")
+    catalogue.add_argument("--column", help="Which column holds the handle")
+    catalogue.add_argument("--handles", help="Comma-separated extra handles")
+    catalogue.add_argument("--urls-out", default="data/output/discovered_urls.csv")
+    catalogue.add_argument("--done-file", default="data/output/catalogue_done.txt",
+                           help="Handles already walked, so a re-run resumes")
+    catalogue.add_argument("--per-creator", type=int, default=10,
+                           help="Max posts per creator (the embed serves 10)")
+    catalogue.add_argument("--max-items", type=int, help="Stop after N this run")
+    common(catalogue)
+    catalogue.set_defaults(func=cmd_catalogue)
+
+    profiles = sub.add_parser(
+        "profiles", help="Follower count + bio email for each creator"
+    )
+    profiles.add_argument("--from-store", default="data/output/videos.jsonl",
+                          help="Take the handle list from this video store")
+    profiles.add_argument("--input", help="CSV/XLSX to read extra handles from")
+    profiles.add_argument("--column", help="Which column holds the handle")
+    profiles.add_argument("--handles", help="Comma-separated extra handles")
+    profiles.add_argument("--store", default="data/output/creators.jsonl")
+    profiles.add_argument("--max-items", type=int, help="Stop after N this run")
+    common(profiles)
+    profiles.set_defaults(func=cmd_profiles)
 
     return parser
 

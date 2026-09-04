@@ -69,11 +69,27 @@ def detect_language(text: str | None) -> tuple[str, str]:
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 # Creators obfuscate to dodge scrapers: "name (at) gmail dot com".
+# The separators must be standalone words, not letters sitting inside one.
+# Without the boundaries this matched the "at" inside "heather", turning the
+# bio link detoxheather.com into the address detoxhe@her.com -- a real-looking
+# address for a person who never published one. Same bug read "health
+# educator. Ask your doctor" as educ@or.ask. A written-out separator also has
+# to be spaced ("name at gmail dot com"); "at"/"dot" jammed against the text
+# is prose, not obfuscation.
 _OBFUSCATED_RE = re.compile(
-    r"([A-Za-z0-9._%+-]+)\s*[\(\[]?\s*(?:at|@|arroba)\s*[\)\]]?\s*"
-    r"([A-Za-z0-9.-]+)\s*[\(\[]?\s*(?:dot|punto|\.)\s*[\)\]]?\s*([A-Za-z]{2,})",
+    r"([A-Za-z0-9._%+-]+)\s*(?:[\(\[]\s*(?:at|@|arroba)\s*[\)\]]|\s(?:at|arroba)\s|@)\s*"
+    r"([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)\s*"
+    r"(?:[\(\[]\s*(?:dot|punto)\s*[\)\]]|\s(?:dot|punto)\s|\.)\s*([A-Za-z]{2,})",
     re.I,
 )
+
+# TLDs a creator actually puts in a bio. An "address" ending in anything else
+# is prose the regex chewed through.
+_PLAUSIBLE_TLDS = {
+    "com", "net", "org", "co", "io", "me", "biz", "info", "shop", "store",
+    "studio", "club", "agency", "email", "us", "uk", "ca", "au", "es", "mx",
+    "de", "fr", "it", "nl", "se", "ie", "nz", "tv", "app", "link", "site",
+}
 
 
 def extract_email(*texts: str | None) -> str:
@@ -92,7 +108,8 @@ def extract_email(*texts: str | None) -> str:
         obfuscated = _OBFUSCATED_RE.search(cleaned)
         if obfuscated:
             user, domain, tld = obfuscated.groups()
-            return f"{user}@{domain}.{tld}".lower()
+            if tld.lower() in _PLAUSIBLE_TLDS and len(user) >= 3:
+                return f"{user}@{domain}.{tld}".lower()
     return ""
 
 
@@ -166,6 +183,100 @@ def is_colostrum(*texts: str | None) -> bool:
     return any(term in blob for term in _COLOSTRUM_TERMS)
 
 
+# Accounts that ARE the brand, rather than creators talking about it. Not
+# outreach targets, but worth keeping as reference for what each competitor
+# pushes itself.
+_KNOWN_BRAND_ACCOUNTS = {
+    "trymiraclemoo", "try.miraclemoo", "miraclemoo", "wondercowusa", "wondercow",
+    "armra", "drinkarmra", "bloomnutrition", "cymbiotika", "lemme", "nutricost",
+    "microingredients", "physicianschoice", "wellah", "cowboycolostrum",
+    "cowabungacolostrum", "rheaessentials", "magicmilk",
+    # Observed in this scrape; the handle misspells the product word, so the
+    # alias matching below cannot reach it.
+    "cowabungacolustrum",
+}
+
+
+def _compact(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+
+
+# Words a brand wraps around its own name when the bare one is taken, and
+# words it appends. '@enjoywondercow' and '@wondercowusa' are both WonderCow.
+_BRAND_AFFIXES = (
+    "try", "enjoy", "drink", "get", "shop", "the", "my", "buy", "use", "go",
+    "official", "usa", "us", "uk", "co", "inc", "hq", "brand", "store",
+    "colostrum", "nutrition", "supplements", "health", "wellness",
+)
+
+
+def _is_brand_name(value: str | None) -> bool:
+    """Whether a handle or display name essentially *is* a competitor's name."""
+    normalized = _compact(value)
+    if not normalized:
+        return False
+    for aliases in COMPETITOR_BRANDS.values():
+        for alias in aliases:
+            compact = _compact(alias)
+            if len(compact) < 5 or compact not in normalized:
+                continue
+            # Strip the brand out; whatever is left must be nothing but the
+            # affixes a brand puts around its own name. That keeps
+            # '@enjoywondercow' and 'Bloom Nutrition' while still rejecting
+            # '@sarahtriedwondercow', whose remainder is a person's name.
+            remainder = normalized.replace(compact, "", 1)
+            while remainder:
+                for affix in sorted(_BRAND_AFFIXES, key=len, reverse=True):
+                    if remainder.startswith(affix):
+                        remainder = remainder[len(affix):]
+                        break
+                    if remainder.endswith(affix):
+                        remainder = remainder[: -len(affix)]
+                        break
+                else:
+                    break
+            if len(remainder) <= 2:
+                return True
+    return False
+
+
+def is_brand_account(handle: str | None, nickname: str | None = None) -> bool:
+    """Whether an account looks like the brand's own, not a creator's.
+
+    Checks the known list, then the handle, then the *display name* -- which
+    matters more than it looks: Bloom Nutrition posts as '@bloom', and the
+    handle alone gives nothing away, while the display name says exactly what
+    it is.
+
+    Deliberately narrow in the other direction: mislabelling a real creator as
+    brand-owned drops them from outreach entirely, so the brand name has to be
+    essentially the whole identifier rather than merely present in it.
+    """
+    if not handle and not nickname:
+        return False
+    if _compact(handle) in {_compact(h) for h in _KNOWN_BRAND_ACCOUNTS}:
+        return True
+    return _is_brand_name(handle) or _is_brand_name(nickname)
+
+
+# Negative / debunking videos are kept deliberately: they are the objection
+# research that tells you what a sceptical buyer already believes.
+_SKEPTICAL_TERMS = [
+    "deinfluencing", "de-influencing", "not worth", "isn't worth", "isnt worth",
+    "waste of money", "waste your money", "don't buy", "dont buy", "stop buying",
+    "overrated", "hard pass", "scam", "debunk", "no evidence", "placebo",
+    "not backed by", "myth", "snake oil", "save your money", "disappointed",
+    "didn't work", "didnt work", "did not work", "stopped taking", "regret",
+    "no diferencia", "no funciona", "no vale la pena", "estafa", "no sirve",
+]
+
+
+def is_skeptical(*texts: str | None) -> bool:
+    """Whether the caption reads as critical of the product/category."""
+    blob = " ".join(t.lower() for t in texts if t)
+    return any(term in blob for term in _SKEPTICAL_TERMS)
+
+
 def has_product_tag(description: str | None, hashtags=None, extra=None) -> bool:
     """Whether the video looks like it tags/sells a product.
 
@@ -201,7 +312,14 @@ def enrich_videos(videos, creators=None):
         video.language_confidence = conf
         video.competitor_brand = match_brand(text, tags, video.music_title) or None
         video.is_colostrum = is_colostrum(text, tags, video.music_title)
-        video.has_product_tag = has_product_tag(text, video.hashtags)
+        # A provider may already have set this from TikTok's own commerce
+        # anchors, which is stronger evidence than the caption. OR rather than
+        # assign, so the text heuristic can add a True but never erase one.
+        video.has_product_tag = bool(video.has_product_tag) or has_product_tag(
+            text, video.hashtags
+        )
+        video.stance = "skeptical" if is_skeptical(text, tags) else None
+        video.brand_account = is_brand_account(video.handle) or None
 
         creator = by_handle.get((video.handle or "").lower())
         if creator:
@@ -220,6 +338,7 @@ def enrich_creators(creators):
         creator.email = extract_email(creator.bio, creator.bio_link) or None
         lang, _ = detect_language(creator.bio)
         creator.language = lang
+        creator.brand_account = is_brand_account(creator.handle, creator.nickname) or None
     return creators
 
 

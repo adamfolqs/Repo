@@ -1,20 +1,22 @@
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-.env
-*.egg-info/
-.pytest_cache/
 
-# Secrets — never commit
-service_account.json
-credentials.json
-token.json
-
-# Scraped output is data, not source
-data/output/*
 !data/output/.gitkeep
-!data/output/handle_lookup.csv
-!data/output/found_videos.csv
 !data/output/colostrum_creator_list.xlsx
+!data/output/found_videos.csv
+!data/output/handle_lookup.csv
+# Scraped output is data, not source
+# Secrets — never commit
+*.egg-info/
+*.py[cod]
+*.pyc
 .cache/
+.env
+.pytest_cache/
+.venv/
+__pycache__/
+credentials.json
+data/output/*
+data/raw/
+service_account.json
+token.json
+venv/
+logs/

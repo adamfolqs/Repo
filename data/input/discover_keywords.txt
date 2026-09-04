@@ -1,0 +1,73 @@
+# Keywords for `tiktok_scraper discover`. One per line, '#' comments ignored.
+#
+# Biased deliberately towards the *bovine supplement* niche. A bare "colostrum"
+# discover page is dominated by breastfeeding content (colostrum collectors,
+# labour-and-delivery nurses), which is a different market entirely -- so the
+# generic term is kept but carried by the more specific ones around it.
+
+# --- core English ---
+bovine colostrum
+colostrum supplement
+colostrum review
+colostrum before and after
+colostrum benefits
+colostrum gut health
+colostrum bloating
+colostrum results
+colostrum powder
+colostrum skin
+colostrum hair growth
+colostrum immune system
+colostrum leaky gut
+best colostrum supplement
+colostrum daily routine
+colostrum 30 days
+colostrum weight loss
+colostrum tiktok shop
+colostrum honest review
+colostrum worth it
+colostrum
+
+# --- competitor brands ---
+armra colostrum
+armra review
+armra before and after
+miracle moo colostrum
+miracle moo review
+micro moo colostrum
+bloom colostrum
+cymbiotika colostrum
+lemme colostrum
+nutricost colostrum
+micro ingredients colostrum
+physicians choice colostrum
+wellah colostrum
+magic milk colostrum
+wondercow colostrum
+wondercow review
+cowabunga colostrum
+cowboy colostrum
+rhea essentials colostrum
+
+# --- Spanish ---
+calostro bovino
+calostro bovino opiniones
+calostro bovino beneficios
+calostro resultados
+calostro suplemento
+calostro bovino antes y despues
+calostro para el intestino
+calostro bovino como tomar
+beneficios del calostro
+
+# --- hashtag-shaped ---
+colostrumbenefits
+colostrumreview
+bovinecolostrum
+colostrumsupplement
+calostrobovino
+guthealth
+healthygut
+bloating remedy
+gut health supplement
+tiktokshopfinds

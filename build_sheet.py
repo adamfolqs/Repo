@@ -1,113 +1,506 @@
-"""Assemble the deliverable workbook from every source we have."""
-import csv, sys
-from pathlib import Path
-sys.path.insert(0, "data/discovered")
+"""Assemble the deliverable workbook from the scrape stores.
 
-from openpyxl import load_workbook
-from found_videos import ROWS
-from tiktok_scraper.models import Video, Creator, VIDEO_COLUMNS, CREATOR_COLUMNS
-from tiktok_scraper.enrich import enrich_videos, enrich_creators
-from tiktok_scraper.sinks.files import write_xlsx, write_csv, to_rows
+Reads the append-only JSONL stores written by the discover/resolve/catalogue/
+profiles stages and produces `data/output/colostrum_creator_list.xlsx`.
 
-# ---- 1. discovered videos -------------------------------------------------
-videos = [
-    Video(video_id=vid, handle=h, description=cap, source="web_search",
-          matched_query=f"search:{brand or 'colostrum'}")
-    for h, vid, cap, brand, is_brand in ROWS
-]
-brand_accounts = {h for h, _, _, _, is_brand in ROWS if is_brand}
+Two rules run through the whole file:
 
-# ---- 2. handle lookups from the original sheet ----------------------------
-lookup = {}
-for r in csv.DictReader(open("data/output/handle_lookup.csv")):
-    if r["handle"]:
-        lookup[r["name"]] = r
+* No number is ever invented. Every like/view/follower count came from the
+  record TikTok served for that exact video or profile. A field we could not
+  read stays empty, because a plausible-looking estimate would silently become
+  the sort order for outreach decisions.
+* No handle is ever guessed from a display name. A row in the original
+  sourcing sheet only gets a handle when a creator we actually landed on
+  matches it *and* that creator is in the colostrum dataset.
+"""
 
-creators = [Creator(handle=h, source="web_search") for h in sorted({v.handle for v in videos})]
-enrich_creators(creators)
-enrich_videos(videos, creators)
+from __future__ import annotations
 
-# Brand accounts get flagged in the provenance column, not silently dropped:
-# their videos are the best reference for what the competitor itself pushes.
-for v in videos:
-    if v.handle in brand_accounts:
-        v.matched_query = (v.matched_query or "") + " | BRAND-OWNED ACCOUNT"
-
-# ---- 3. original sheet, with handles merged in ----------------------------
-wb = load_workbook("data/input/colostrum_sourcing.xlsx", data_only=True)
-ws = wb["Creator Videos"]
-orig = list(ws.iter_rows(values_only=True))
-ohdr, obody = orig[0], [r for r in orig[1:] if any(r)]
-oidx = {h: i for i, h in enumerate(ohdr)}
-
-merged_rows = []
-for r in obody:
-    name = r[oidx["Creator label from recording"]]
-    hit = lookup.get(name, {})
-    merged_rows.append([
-        r[oidx["Product / Brand"]], name,
-        hit.get("handle", ""),
-        hit.get("profile_url", ""),
-        hit.get("confidence", "not searched yet"),
-        r[oidx["Likes"]], r[oidx["Engagement tier"]],
-        r[oidx["OCR confidence"]],
-        hit.get("evidence", ""),
-    ])
-MERGED_HDR = ["Brand", "Name from recording", "Handle", "Profile URL",
-              "Lookup status", "Likes", "Engagement tier", "OCR confidence", "Evidence"]
-
-# ---- write ---------------------------------------------------------------
-out = Path("data/output/colostrum_creator_list.xlsx")
-write_xlsx(videos, VIDEO_COLUMNS, out, "Found Videos")
-
-from openpyxl import load_workbook as lw
-from openpyxl.styles import Font, PatternFill
-wb2 = lw(out)
-
-ws2 = wb2.create_sheet("Original Sheet + Handles")
-ws2.append(MERGED_HDR)
-for row in merged_rows:
-    ws2.append(row)
-
-ws3 = wb2.create_sheet("Creators")
-ws3.append(["handle", "profile_url", "videos_found", "brands", "language", "brand_owned"])
+import csv
+import sys
+import unicodedata
 from collections import defaultdict
-agg = defaultdict(lambda: {"n": 0, "brands": set(), "langs": set()})
-for v in videos:
-    a = agg[v.handle]; a["n"] += 1
-    if v.competitor_brand: a["brands"].add(v.competitor_brand)
-    a["langs"].add(v.language)
-for h, a in sorted(agg.items(), key=lambda kv: -kv[1]["n"]):
-    ws3.append([h, f"https://www.tiktok.com/@{h}", a["n"], ", ".join(sorted(a["brands"])),
-                ", ".join(sorted(x for x in a["langs"] if x and x != "unknown")) or "unknown",
-                "YES" if h in brand_accounts else ""])
+from pathlib import Path
 
-for ws_ in (ws2, ws3):
-    for cell in ws_[1]:
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="1F2937")
-    ws_.freeze_panes = "A2"
-    ws_.auto_filter.ref = ws_.dimensions
-    for col in ws_.columns:
-        letter = col[0].column_letter
-        ws_.column_dimensions[letter].width = min(
-            max(len(str(c.value or "")) for c in col) + 2, 50)
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
-wb2.save(out)
-write_csv(videos, VIDEO_COLUMNS, "data/output/found_videos.csv")
+from tiktok_scraper import store
+from tiktok_scraper.enrich import enrich_creators, enrich_videos
+from tiktok_scraper.models import Creator, Video
 
-print(f"wrote {out}")
-print(f"  Found Videos tab           : {len(videos)} rows")
-print(f"  Original Sheet + Handles   : {len(merged_rows)} rows "
-      f"({sum(1 for r in merged_rows if r[2])} now have a handle)")
-print(f"  Creators tab               : {len(agg)} creators")
-langs = {}
-for v in videos: langs[v.language] = langs.get(v.language, 0) + 1
-print(f"\nlanguage split: {langs}")
-brands = {}
-for v in videos:
-    b = v.competitor_brand or "(none named)"
-    brands[b] = brands.get(b, 0) + 1
-print(f"brands: {brands}")
-print(f"product-tagged: {sum(1 for v in videos if v.has_product_tag)}/{len(videos)}")
-print(f"colostrum-topic: {sum(1 for v in videos if v.is_colostrum)}/{len(videos)}")
+OUT = Path("data/output/colostrum_creator_list.xlsx")
+ORIGINAL = Path("data/input/colostrum_sourcing.xlsx")
+ROSTER = Path("data/outreach/campaign_roster.csv")
+
+MIN_LIKES = 50
+
+
+# --------------------------------------------------------------------- load
+
+def load_videos() -> list[Video]:
+    """Every resolved video, newest record per id winning."""
+    by_id: dict[str, Video] = {}
+    for record in store.read("data/output/videos.jsonl"):
+        try:
+            video = Video(**record)
+        except Exception:
+            continue
+        by_id[video.video_id] = video
+    return list(by_id.values())
+
+
+def load_creators() -> list[Creator]:
+    by_handle: dict[str, Creator] = {}
+    for record in store.read("data/output/creators.jsonl"):
+        try:
+            creator = Creator(**record)
+        except Exception:
+            continue
+        by_handle[creator.handle.lower()] = creator
+    return list(by_handle.values())
+
+
+# ------------------------------------------------------------------ styling
+
+HEADER_FILL = PatternFill("solid", fgColor="1F2937")
+HEADER_FONT = Font(bold=True, color="FFFFFF")
+
+
+def style(ws, widths: dict[str, int] | None = None, wrap_cols: tuple[str, ...] = ()) -> None:
+    for cell in ws[1]:
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = Alignment(vertical="center")
+    ws.freeze_panes = "A2"
+    if ws.max_row >= 1 and ws.max_column >= 1:
+        ws.auto_filter.ref = (
+            f"A1:{get_column_letter(ws.max_column)}{max(ws.max_row, 1)}"
+        )
+    for column in ws.columns:
+        letter = column[0].column_letter
+        header = str(ws.cell(row=1, column=column[0].column).value or "")
+        if widths and header in widths:
+            ws.column_dimensions[letter].width = widths[header]
+            continue
+        longest = max((len(str(c.value or "")) for c in column[:200]), default=8)
+        ws.column_dimensions[letter].width = min(max(longest + 2, 10), 46)
+    for header in wrap_cols:
+        for column in ws.columns:
+            if str(ws.cell(row=1, column=column[0].column).value or "") == header:
+                for cell in column[1:]:
+                    cell.alignment = Alignment(wrap_text=False, vertical="top")
+
+
+def write_tab(wb: Workbook, title: str, columns: list[str], rows: list[list]) -> None:
+    ws = wb.create_sheet(title)
+    ws.append(columns)
+    for row in rows:
+        ws.append(row)
+    style(ws)
+
+
+# ------------------------------------------------------------------ outreach
+
+# Hottest first. The order is the point of the tab: whoever is closest to a
+# signed deal sits at the top, and the two dead-end states sink to the bottom.
+STATUS_ORDER = ["accepted", "interested", "replied", "auto-reply", "sent",
+                "declined", "bounced", "not sent"]
+STATUS_FILL = {
+    "accepted":   PatternFill("solid", fgColor="86EFAC"),
+    "interested": PatternFill("solid", fgColor="D9F99D"),
+    "replied":    PatternFill("solid", fgColor="FEF08A"),
+    "auto-reply": PatternFill("solid", fgColor="E5E7EB"),
+    "declined":   PatternFill("solid", fgColor="FECACA"),
+    "bounced":    PatternFill("solid", fgColor="FCA5A5"),
+}
+OUTREACH_COLUMNS = ["reply_status", "handle", "followers", "email", "anchor_brand",
+                    "language", "qualifying_videos", "replied_at", "reply_snippet",
+                    "profile_url", "sent_at", "segment", "notes"]
+
+
+def outreach_rows() -> list[list]:
+    """The campaign roster, hottest first.
+
+    Lives here rather than in a one-off script because build_sheet.py rebuilds
+    the workbook from scratch every run: a tab assembled anywhere else is
+    silently dropped the next time this is called.
+    """
+    if not ROSTER.exists():
+        return []
+    rows = []
+    for row in csv.DictReader(ROSTER.open(encoding="utf-8")):
+        status = row.get("reply_status") or "not sent"
+        rows.append([status] + [row.get(c, "") for c in OUTREACH_COLUMNS[1:]])
+    rank = {s: i for i, s in enumerate(STATUS_ORDER)}
+    rows.sort(key=lambda r: (rank.get(r[0], len(rank)),
+                             -int(r[2] or 0)))
+    return rows
+
+
+def write_outreach_tab(wb: Workbook, rows: list[list]) -> None:
+    ws = wb.create_sheet("Outreach", 0)
+    ws.append(OUTREACH_COLUMNS)
+    for row in rows:
+        ws.append(row)
+        fill = STATUS_FILL.get(row[0])
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+    style(ws, widths={"reply_snippet": 60, "notes": 30, "email": 32})
+
+
+def video_row(video: Video, columns: list[str]) -> list:
+    out = []
+    for column in columns:
+        value = getattr(video, column, None)
+        if isinstance(value, list):
+            value = ", ".join(str(v) for v in value)
+        elif hasattr(value, "isoformat"):
+            value = value.replace(tzinfo=None).isoformat(sep=" ", timespec="minutes")
+        out.append(value)
+    return out
+
+
+# --------------------------------------------------- original-sheet matching
+
+def normalize_name(value: str | None) -> str:
+    """Loose key for comparing a display name to a handle or nickname."""
+    if not value:
+        return ""
+    text = unicodedata.normalize("NFKD", str(value))
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return "".join(c for c in text.lower() if c.isalnum())
+
+
+def match_original_sheet(videos, creators):
+    """Fill handles into the original sourcing sheet, evidence-only.
+
+    A name from the screen recording is matched against creators we actually
+    scraped -- by handle or by display name -- and accepted only when that
+    creator is in the colostrum dataset. Generic first names ('Taylor',
+    'Nikki') are left unresolved on purpose: several real accounts share them,
+    so any pick would be a guess, and a wrong handle sends outreach to a
+    stranger.
+    """
+    by_key: dict[str, list[Creator]] = defaultdict(list)
+    for creator in creators:
+        for key in {normalize_name(creator.handle), normalize_name(creator.nickname)}:
+            if key:
+                by_key[key].append(creator)
+
+    brands_by_handle: dict[str, set[str]] = defaultdict(set)
+    for video in videos:
+        if video.competitor_brand:
+            brands_by_handle[video.handle.lower()].add(video.competitor_brand)
+    colostrum_handles = {
+        v.handle.lower() for v in videos if v.is_colostrum
+    }
+
+    # Handles confirmed by the previous session's manual lookup.
+    prior: dict[str, dict] = {}
+    lookup_path = Path("data/output/handle_lookup.csv")
+    if lookup_path.exists():
+        with lookup_path.open(encoding="utf-8-sig") as fh:
+            for row in csv.DictReader(fh):
+                if row.get("handle"):
+                    prior[normalize_name(row.get("name"))] = row
+
+    # Handles verified this run by opening the profile (see handles.py).
+    verified: dict[str, dict] = {}
+    resolution_path = Path("data/output/name_resolution.csv")
+    if resolution_path.exists():
+        with resolution_path.open(encoding="utf-8-sig") as fh:
+            for row in csv.DictReader(fh):
+                verified[normalize_name(row.get("name"))] = row
+
+    wb = load_workbook(ORIGINAL, data_only=True)
+    ws = wb["Creator Videos"]
+    rows = list(ws.iter_rows(values_only=True))
+    header, body = rows[0], [r for r in rows[1:] if any(r)]
+    index = {name: i for i, name in enumerate(header)}
+
+    out, filled = [], 0
+    for row in body:
+        name = row[index["Creator label from recording"]]
+        brand = row[index["Product / Brand"]]
+        key = normalize_name(name)
+
+        handle = profile = status = evidence = ""
+
+        hit = prior.get(key)
+        if hit:
+            handle = hit["handle"]
+            profile = hit.get("profile_url") or f"https://www.tiktok.com/@{handle}"
+            status = hit.get("confidence") or "confirmed"
+            evidence = hit.get("evidence") or "manual lookup, previous session"
+            # Two accounts can carry the same display name. Where this run
+            # landed on a different one, say so rather than quietly keeping
+            # either -- the earlier lookup has video evidence behind it, so it
+            # wins, but the disagreement is worth a human glance.
+            other = verified.get(key, {}).get("handle")
+            if other and other.lower() != handle.lower():
+                status = "confirmed, but a second account shares this name"
+                evidence += f" | also verified: @{other} displays the same name"
+
+        if not handle and key in verified:
+            row_hit = verified[key]
+            if row_hit.get("handle"):
+                handle = row_hit["handle"]
+                profile = row_hit.get("profile_url") or f"https://www.tiktok.com/@{handle}"
+                status = row_hit.get("confidence") or "confirmed"
+                evidence = row_hit.get("evidence") or ""
+            elif row_hit.get("confidence"):
+                status = row_hit["confidence"]
+                evidence = row_hit.get("evidence") or ""
+
+        if not handle:
+            candidates = [
+                c for c in by_key.get(key, [])
+                if c.handle.lower() in colostrum_handles
+            ]
+            if len(candidates) == 1:
+                creator = candidates[0]
+                handle = creator.handle
+                profile = creator.profile_url
+                shared = brand and brand in brands_by_handle.get(handle.lower(), set())
+                status = "confirmed (scraped)"
+                evidence = (
+                    f"name matches @{handle}"
+                    + (f"; posts about {brand}" if shared else "")
+                    + f"; {sum(1 for v in videos if v.handle.lower() == handle.lower())}"
+                    " colostrum video(s) in this scrape"
+                )
+            elif len(candidates) > 1:
+                status = "ambiguous — several accounts match this name"
+                evidence = "candidates: " + ", ".join(f"@{c.handle}" for c in candidates[:5])
+            else:
+                status = "not found"
+
+        if handle:
+            filled += 1
+        out.append([
+            brand, name, handle, profile, status,
+            row[index["Likes"]], row[index["Engagement tier"]],
+            row[index["OCR confidence"]], evidence,
+        ])
+    return out, filled
+
+
+ORIGINAL_HEADER = [
+    "Brand", "Name from recording", "Handle", "Profile URL", "Lookup status",
+    "Likes (from recording)", "Engagement tier", "OCR confidence", "Evidence",
+]
+
+
+def _write_slim_csvs(csv_dir, video_columns, qualifying, creator_columns,
+                     creator_rows, original_rows) -> None:
+    """Narrower copies for destinations that take content inline.
+
+    Same rows, fewer columns: the bulky free-text fields (full caption, bio,
+    avatar and cover URLs) are what make the full export large, and none of
+    them is what someone sorting an outreach list is reading. Captions are
+    kept but truncated, since the point of a caption here is to recognise the
+    creative, not to reproduce it.
+    """
+    slim_dir = csv_dir / "slim"
+    slim_dir.mkdir(exist_ok=True)
+
+    keep_video = ["video_url", "handle", "creator_followers", "creator_email",
+                  "likes", "views", "comments", "engagement_rate", "language",
+                  "competitor_brand", "stance", "brand_account", "description",
+                  "created_at"]
+    idx = {name: i for i, name in enumerate(video_columns)}
+    with (slim_dir / "Videos.csv").open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(keep_video)
+        for video in qualifying:
+            row = video_row(video, video_columns)
+            out = [row[idx[c]] for c in keep_video]
+            caption = out[keep_video.index("description")]
+            if isinstance(caption, str) and len(caption) > 180:
+                out[keep_video.index("description")] = caption[:177] + "..."
+            writer.writerow(out)
+
+    keep_creator = ["handle", "profile_url", "followers", "email", "language",
+                    "brand_account", "colostrum_videos", "qualifying_videos",
+                    "total_likes_on_colostrum_videos", "brands_featured",
+                    "skeptical_videos", "top_video_url", "top_video_likes",
+                    "nickname", "verified", "region"]
+    cidx = {name: i for i, name in enumerate(creator_columns)}
+    with (slim_dir / "Creators.csv").open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(keep_creator)
+        for row in creator_rows:
+            writer.writerow([row[cidx[c]] for c in keep_creator])
+
+    with (slim_dir / "Original_Sheet_and_Handles.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as fh:
+        writer = csv.writer(fh)
+        writer.writerow(ORIGINAL_HEADER)
+        writer.writerows(original_rows)
+
+
+# ---------------------------------------------------------------------- main
+
+def main() -> int:
+    videos = load_videos()
+    creators = load_creators()
+    if not videos:
+        print("No videos in the store yet — run discover/resolve first.", file=sys.stderr)
+        return 1
+
+    enrich_creators(creators)
+    enrich_videos(videos, creators)
+
+    colostrum = [v for v in videos if v.is_colostrum]
+    qualifying = [
+        v for v in colostrum
+        if (v.likes or 0) >= MIN_LIKES and v.has_product_tag
+    ]
+    qualifying.sort(key=lambda v: (v.likes or 0), reverse=True)
+    skeptical = sorted(
+        (v for v in colostrum if v.stance == "skeptical"),
+        key=lambda v: (v.likes or 0), reverse=True,
+    )
+    colostrum_sorted = sorted(colostrum, key=lambda v: (v.likes or 0), reverse=True)
+
+    video_columns = [
+        "video_url", "handle", "creator_followers", "creator_email",
+        "likes", "views", "comments", "shares", "saves", "engagement_rate",
+        "language", "competitor_brand", "stance", "brand_account",
+        "is_colostrum", "has_product_tag",
+        "description", "hashtags", "music_title", "created_at",
+        "duration_seconds", "matched_query", "video_id", "source",
+    ]
+
+    # ---- creators, aggregated over their videos --------------------------
+    by_handle = {c.handle.lower(): c for c in creators}
+    agg: dict[str, dict] = defaultdict(
+        lambda: {"videos": 0, "qualifying": 0, "brands": set(), "langs": set(),
+                 "likes": 0, "skeptical": 0, "best": None}
+    )
+    for video in colostrum:
+        entry = agg[video.handle.lower()]
+        entry["videos"] += 1
+        entry["likes"] += video.likes or 0
+        if video.competitor_brand:
+            entry["brands"].add(video.competitor_brand)
+        if video.language and video.language != "unknown":
+            entry["langs"].add(video.language)
+        if video.stance == "skeptical":
+            entry["skeptical"] += 1
+        if (video.likes or 0) >= MIN_LIKES and video.has_product_tag:
+            entry["qualifying"] += 1
+        if not entry["best"] or (video.likes or 0) > (entry["best"].likes or 0):
+            entry["best"] = video
+
+    creator_columns = [
+        "handle", "profile_url", "followers", "email", "language",
+        "brand_account", "colostrum_videos", "qualifying_videos",
+        "total_likes_on_colostrum_videos", "brands_featured", "skeptical_videos",
+        "top_video_url", "top_video_likes",
+        "nickname", "verified", "total_likes", "video_count", "region",
+        "bio", "bio_link",
+    ]
+    creator_rows = []
+    for handle, entry in sorted(
+        agg.items(), key=lambda kv: (kv[1]["qualifying"], kv[1]["likes"]), reverse=True
+    ):
+        creator = by_handle.get(handle)
+        best = entry["best"]
+        creator_rows.append([
+            handle,
+            f"https://www.tiktok.com/@{handle}",
+            creator.followers if creator else None,
+            (creator.email if creator else None) or "",
+            (creator.language if creator and creator.language != "unknown" else None)
+            or ", ".join(sorted(entry["langs"])) or "unknown",
+            "YES" if (creator and creator.brand_account) else "",
+            entry["videos"], entry["qualifying"], entry["likes"],
+            ", ".join(sorted(entry["brands"])),
+            entry["skeptical"] or "",
+            best.video_url if best else "",
+            best.likes if best else None,
+            creator.nickname if creator else None,
+            "YES" if (creator and creator.verified) else "",
+            creator.total_likes if creator else None,
+            creator.video_count if creator else None,
+            creator.region if creator else None,
+            (creator.bio if creator else None) or "",
+            (creator.bio_link if creator else None) or "",
+        ])
+
+    original_rows, filled = match_original_sheet(colostrum, creators)
+
+    # ---- write -----------------------------------------------------------
+    outreach = outreach_rows()
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    write_tab(wb, "Videos", video_columns,
+              [video_row(v, video_columns) for v in qualifying])
+    write_tab(wb, "Creators", creator_columns, creator_rows)
+    write_tab(wb, "Original Sheet + Handles", ORIGINAL_HEADER, original_rows)
+    write_tab(wb, "Objection Research", video_columns,
+              [video_row(v, video_columns) for v in skeptical])
+    write_tab(wb, "All Colostrum Videos", video_columns,
+              [video_row(v, video_columns) for v in colostrum_sorted])
+    write_outreach_tab(wb, outreach)   # index 0: the tab opened first
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(OUT)
+
+    # Per-tab CSVs as well. The workbook is the deliverable, but uploading it
+    # anywhere that only accepts content inline means shipping ~300 kB of
+    # base64 where a single wrong character corrupts the whole file; the same
+    # data as text degrades to one wrong cell instead.
+    csv_dir = OUT.parent / "tabs"
+    csv_dir.mkdir(exist_ok=True)
+    for name, columns, rows in [
+        ("Outreach", OUTREACH_COLUMNS, outreach),
+        ("Videos", video_columns, [video_row(v, video_columns) for v in qualifying]),
+        ("Creators", creator_columns, creator_rows),
+        ("Original Sheet + Handles", ORIGINAL_HEADER, original_rows),
+        ("Objection Research", video_columns,
+         [video_row(v, video_columns) for v in skeptical]),
+        ("All Colostrum Videos", video_columns,
+         [video_row(v, video_columns) for v in colostrum_sorted]),
+    ]:
+        path = csv_dir / f"{name.replace(' ', '_').replace('+', 'and')}.csv"
+        with path.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(columns)
+            writer.writerows(rows)
+
+    _write_slim_csvs(csv_dir, video_columns, qualifying, creator_columns,
+                     creator_rows, original_rows)
+
+    # ---- report ----------------------------------------------------------
+    langs: dict[str, int] = defaultdict(int)
+    brands: dict[str, int] = defaultdict(int)
+    for video in qualifying:
+        langs[video.language or "unknown"] += 1
+        brands[video.competitor_brand or "(none named)"] += 1
+    with_email = sum(1 for row in creator_rows if row[3])
+    with_followers = sum(1 for row in creator_rows if row[2])
+
+    print(f"wrote {OUT}")
+    print(f"  Outreach (campaign roster, hottest first)  : {len(outreach)}")
+    print(f"  Videos (colostrum, {MIN_LIKES}+ likes, product-tagged): {len(qualifying)}")
+    print(f"  Creators                                  : {len(creator_rows)}")
+    print(f"  Original Sheet + Handles                  : {len(original_rows)} "
+          f"({filled} with a handle)")
+    print(f"  Objection Research                        : {len(skeptical)}")
+    print(f"  All Colostrum Videos                      : {len(colostrum_sorted)}")
+    print(f"\n  resolved videos in store: {len(videos)}  profiles: {len(creators)}")
+    print(f"  creators with follower count: {with_followers}, with email: {with_email}")
+    print(f"\n  language split (Videos tab): {dict(langs)}")
+    print("  brand split (Videos tab):")
+    for brand, count in sorted(brands.items(), key=lambda kv: -kv[1]):
+        print(f"    {brand:22} {count}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

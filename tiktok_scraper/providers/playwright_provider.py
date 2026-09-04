@@ -24,7 +24,17 @@ _REHYDRATION_RE = re.compile(
     r'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>',
     re.DOTALL,
 )
-_CAPTCHA_MARKERS = ("captcha-verify", "verify-bar", "/captcha/", "Access Denied")
+# Markers that mean a captcha was actually *served*. Deliberately narrow:
+# "/captcha/" alone matches the captcha SDK's asset URL, which is bundled into
+# every normal TikTok page, so testing for it reports a wall on pages that
+# loaded perfectly. Only trust markers that appear when the wall is rendered.
+_CAPTCHA_MARKERS = (
+    "captcha-verify-container",
+    "captcha_verify_container",
+    "secsdk-captcha-drag",
+    "verify-bar",
+    "Access Denied",
+)
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -69,7 +79,11 @@ class PlaywrightProvider(Provider):
         self._pw = sync_playwright().start()
         launch_kwargs: dict = {
             "headless": headless,
-            "args": ["--disable-blink-features=AutomationControlled"],
+            "args": [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
         }
         # Use a pre-installed Chromium when one is provided (some sandboxes ship
         # a browser whose build number does not match the pip-installed
@@ -85,9 +99,18 @@ class PlaywrightProvider(Provider):
         proxy = proxy_server or os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
         if proxy:
             launch_kwargs["proxy"] = {"server": proxy}
-            # The proxy terminates TLS with its own CA, so the browser must not
-            # reject the resulting certificates.
-            launch_kwargs["args"].append("--ignore-certificate-errors")
+            # Chromium's TLS 1.3 ClientHello carries a post-quantum key share,
+            # which pushes it to ~1.8 kB and split across packets. Some egress
+            # proxies answer that with a TLS alert and drop the tunnel, so every
+            # navigation dies as ERR_CONNECTION_RESET -- for *all* hosts, which
+            # is what distinguishes it from TikTok blocking us. Capping at
+            # TLS 1.2 keeps the ClientHello small and the handshake intact.
+            #
+            # Deliberately NOT --ignore-certificate-errors: the proxy's CA is in
+            # the browser trust store already, and turning verification off would
+            # hide a real MITM without fixing this.
+            launch_kwargs["args"].append("--ssl-version-max=tls1.2")
+            launch_kwargs["args"].append("--disable-quic")
 
         self._browser = self._pw.chromium.launch(**launch_kwargs)
         self._ctx = self._browser.new_context(
